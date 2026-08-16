@@ -85,7 +85,12 @@ git add -A
 git commit -m "standpoint-monitors: Tier 0 probe, body assertions, dead-man's switch"
 ```
 
-**Expected output:** `11 files changed`.
+**Expected output:** `12 files changed`.
+
+⚠ **Twelve, not eleven.** `ls -a` in step 1 shows eleven *entries*, but two of those are `.`
+and `..` and one is the `.github` directory holding four workflow files. Corrected here
+after the first run through reported 12 against an expected 11 — a stated number that had
+never been counted, which is the shape worth catching even when it costs nothing.
 
 Then create it on GitHub. ⚠ **`gh` was unauthenticated on your Mac as of the last
 check**, so try it and fall back to the browser:
