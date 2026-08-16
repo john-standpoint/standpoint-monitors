@@ -1,0 +1,52 @@
+name: Probe · daily (page + warnings)
+
+# The tier that catches the failures nobody was on the other end of.
+#
+# This suite adds the WARNING checks the fast probe filters out — the ones that
+# answer HTTP 200 while something is quietly wrong:
+#
+#   register != on        the audit registry state that ran broken for 19 days
+#   ticket   != enforce   B-07 unbound, i.e. submissions trusted again
+#   stale    == true      a booking cache that could not be refreshed
+#   robots.txt            the AI crawler policy losing named agents
+#
+# ⚠ A WARNING TURNS THIS RUN RED, AND THAT IS THE DESIGN. The tempting
+# alternative — print the warning and exit 0 — recreates the exact failure this
+# whole repository was built after: the registry's 401s were non-blocking by
+# design, correct by design, reported to one line of chat, and then nowhere.
+# One red run a day is loud enough to act on and quiet enough not to mute.
+
+on:
+  schedule:
+    # 06:07 UTC — early morning in Zurich, so a red run is sitting in the inbox
+    # at the start of the day rather than competing with it.
+    - cron: "7 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-daily
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Page-level checks and warnings
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ⚠ No --deadman here. The liveness signal belongs to exactly one suite,
+      # and it is the fast one. Pinging from two schedules would mean the
+      # daily run alone could keep the switch looking healthy while the
+      # 15-minute probe had silently stopped — which is the precise failure the
+      # switch exists to catch.
+      - name: Run the daily probe
+        run: node probe.mjs --suite daily

@@ -1,0 +1,59 @@
+name: Probe · fast (every 15 min)
+
+# The visitor-facing tier. Runs PAGE checks only — is the live build being
+# served, can the booking calendar be drawn, is the Scan's database reachable.
+# Warnings are deliberately NOT run here; they belong to the daily suite, so a
+# config drift produces one red run a day rather than ninety-six.
+#
+# ⚠ THE 15-MINUTE CADENCE IS FREE ONLY BECAUSE THIS REPOSITORY IS PUBLIC.
+# GitHub bills Actions in whole minutes per job, so this workflow alone is
+# ~2,880 minutes a month — above the 2,000-minute free tier for a private
+# repository. If this repo is ever made private, this cron MUST come down to
+# hourly or the bill arrives silently. Nothing here can detect that for you.
+#
+# ⚠ GITHUB DISABLES SCHEDULED WORKFLOWS AFTER 60 DAYS OF REPOSITORY INACTIVITY.
+# That is a silent death: no run, no failure, no mail, and a monitoring system
+# that has stopped monitoring looks exactly like one with nothing to report.
+# The dead-man's switch below is the only thing that catches it — which is why
+# --deadman is passed here, on the most frequent suite, and why a missing
+# DEADMAN_URL is a hard failure rather than a skipped step.
+
+on:
+  schedule:
+    # Offset from the top of the hour on purpose: GitHub's scheduler is
+    # congested at :00 and delays runs, which would show up as jitter in the
+    # timing samples this suite is quietly collecting.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+# Read-only. This workflow has no business touching the repository, and a
+# monitor that could write to things is a monitor that can break them.
+permissions:
+  contents: read
+
+# A slow run must never have a second run pile up behind it. `cancel-in-progress`
+# is false: cancelling the older run would lose the sample it was taking.
+concurrency:
+  group: probe-fast
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Page-level checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # No `npm ci`. There are no dependencies, deliberately — see README.
+      # A monitor that can be broken by a supply-chain update is a monitor
+      # that will be broken on the morning you need it.
+      - name: Run the fast probe
+        env:
+          DEADMAN_URL: ${{ secrets.DEADMAN_URL }}
+        run: node probe.mjs --suite fast --deadman

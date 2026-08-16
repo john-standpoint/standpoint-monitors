@@ -1,0 +1,16 @@
+{
+  "name": "standpoint-monitors",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Scheduled probes that assert on the response BODIES of standpoint.ch and scan.standpoint.ch. Deliberately dependency-free.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "probe": "node probe.mjs --suite fast",
+    "probe:daily": "node probe.mjs --suite daily",
+    "probe:weekly": "node probe.mjs --suite weekly"
+  }
+}

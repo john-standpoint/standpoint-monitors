@@ -1,0 +1,45 @@
+name: Probe · weekly (structure)
+
+# Everything the daily suite runs, plus the two structural checks that are too
+# slow-moving to be worth asking every day:
+#
+#   sitemap       has the site quietly LOST pages, and is every URL on the live
+#                 origin — the "a check that reads the file naming a thing has
+#                 not read the thing" case
+#   hidden page   is /setup-a-session/ still reachable AND still out of the
+#                 sitemap, asserted in BOTH directions
+#
+# ⚠ The sitemap floor lives in probe.mjs and is a RATCHET. Adding pages raises
+# it; it exists to catch pages disappearing, which has never been intentional.
+# A red run here after a deliberate content change means raise the floor, not
+# weaken the check.
+
+on:
+  schedule:
+    # Monday 06:23 UTC. Offset minute for the same scheduler-congestion reason
+    # as the other suites.
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: probe-weekly
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Structural checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run the weekly probe
+        run: node probe.mjs --suite weekly

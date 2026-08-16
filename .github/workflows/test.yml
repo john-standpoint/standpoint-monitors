@@ -1,0 +1,44 @@
+name: Tests · prove the checks can fail
+
+# ⚠ THIS WORKFLOW IS NOT A FORMALITY, AND IT GUARDS THE PROBE'S ONLY REAL
+# WEAKNESS.
+#
+# A monitor that has only ever been observed passing is indistinguishable from
+# a monitor that cannot fail. checks.test.mjs feeds every assertion a
+# deliberately broken fixture — a staging build served over production, a dead
+# Calendly token, `register: admin-only` behind an HTTP 200 — and requires each
+# one to go red. It also feeds the good fixture and requires a pass, because a
+# rule that fails on everything is no more useful than one that passes on
+# everything.
+#
+# It runs on push, and also weekly on its own schedule, so that a repository
+# nobody has touched in a month still proves its checks work. That second
+# trigger has a side effect worth having: scheduled workflows are disabled
+# after 60 days of repository inactivity, and this is the cheapest run that
+# demonstrates the schedules are still alive at all.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node --test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prove every check can fail
+        run: node --test
