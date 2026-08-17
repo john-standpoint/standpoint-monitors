@@ -73,10 +73,14 @@ automating a red check just automates the alarm.
 
 ## Step 3 — Create the repository and push
 
-⚠ **Public, not private.** GitHub bills Actions in whole minutes per job, so the
-15-minute probe is ~2,880 minutes a month — above the 2,000-minute free tier for a
+⚠ **Public, not private.** GitHub bills Actions in whole minutes per job, and the fast
+probe's cron *asks* for ~2,880 minutes a month — above the 2,000-minute free tier for a
 private repo. Public repos get unlimited free Actions. Nothing here holds a secret, and
 every URL it probes is already public.
+
+⚠ **Size that on what is REQUESTED, not on what GitHub delivers.** In practice the
+scheduler runs it closer to hourly (see the note in step 5), but the request is what would
+be billed the moment GitHub honoured it.
 
 ```sh
 cd ~/Developer/standpoint-monitors
@@ -146,11 +150,21 @@ nothing to report.
 
 1. Sign up free at <https://healthchecks.io> and create a check:
    - **Name:** `standpoint-monitors fast probe`
-   - **Period:** `15 minutes`
-   - **Grace time:** `20 minutes`
-     ⚠ Grace must exceed the period. GitHub's scheduler is congested and routinely
-     delays scheduled runs by several minutes; a grace shorter than the period will page
-     you about a probe that is merely late.
+   - **Period:** `60 minutes`
+   - **Grace time:** `30 minutes`
+
+   ⚠⚠ **THESE NUMBERS ARE MEASURED, AND THE FIRST ONES WERE NOT.** This originally said
+   period 15 / grace 20, sized from the cron the workflow *asks* for. GitHub does not
+   deliver that cadence — observed gaps on the first night were
+   `20, 10, 27, 21, 11, 109, 59, 47, 47, 50, 41` minutes, median 41 — so the switch
+   flapped and sent **eight downtime mails in one night about a probe that had never
+   stopped.** Sizing an alert from a number you wish were true is the same error as
+   setting a latency threshold from a cold start, which this repo refuses to do and warns
+   about in three places.
+
+   ⚠ **Detection of a fully-dead probe is therefore ~90 minutes, and that is fine.** The
+   dead-man's switch is **not** the outage detector — page-level failures still mail on any
+   run that happens. Its only question is "has the probe stopped entirely".
 2. Copy its **ping URL** (looks like `https://hc-ping.com/<uuid>`).
 3. In the repo: **Settings → Secrets and variables → Actions → New repository secret**
    - **Name:** `DEADMAN_URL` — exactly this, case-sensitive
@@ -257,7 +271,7 @@ Actions → **Probe · fast** → look at the run list.
 `workflow_dispatch` / "manually run by".
 
 ```sh
-gh run list --workflow "Probe · fast (every 15 min)" --limit 5
+gh run list --workflow probe-fast.yml --limit 5
 ```
 
 **Expected output** — a `schedule` in the event column:
@@ -271,7 +285,7 @@ that the workflow file is on `main` and that Actions is enabled under
 **Settings → Actions → General**. Do not assume it will start on its own.
 
 **Second verification, and the stronger one:** healthchecks.io should now be receiving a
-ping roughly every 15 minutes without you touching anything. That is the only evidence
+ping without you touching anything — roughly hourly, not every 15 minutes. That is the only evidence
 that the whole chain — schedule → probe → ping — is alive.
 
 ---
@@ -312,7 +326,7 @@ To collect them:
 
 ```sh
 cd ~/Developer/standpoint-monitors
-gh run list --workflow "Probe · fast (every 15 min)" --limit 100 --json databaseId --jq '.[].databaseId' | while read -r id; do gh run view "$id" --log 2>/dev/null | grep -E 'scanHealth: HTTP'; done
+gh run list --workflow probe-fast.yml --limit 100 --json databaseId --jq '.[].databaseId' | while read -r id; do gh run view "$id" --log 2>/dev/null | grep -E 'scanHealth: HTTP'; done
 ```
 
 **Expected output:** a hundred-odd lines of `scanHealth: HTTP 200 in NNN ms, 1 attempt(s)`.

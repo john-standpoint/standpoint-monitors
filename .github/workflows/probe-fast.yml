@@ -1,9 +1,36 @@
-name: Probe · fast (every 15 min)
+name: Probe · fast (best-effort, ~hourly in practice)
 
 # The visitor-facing tier. Runs PAGE checks only — is the live build being
 # served, can the booking calendar be drawn, is the Scan's database reachable.
 # Warnings are deliberately NOT run here; they belong to the daily suite, so a
 # config drift produces one red run a day rather than ninety-six.
+#
+# ⚠⚠ THE CRON BELOW ASKS FOR EVERY 15 MINUTES. GITHUB DOES NOT DELIVER IT, AND
+# THIS WORKFLOW IS NAMED FOR WHAT HAPPENS RATHER THAN WHAT IS REQUESTED.
+#
+# Measured over the first night, 2026-08-16/17, from the dead-man's switch's own
+# ping log — gaps between consecutive successful runs, in minutes:
+#
+#     20, 10, 27, 21, 11, 109, 59, 47, 47, 50, 41
+#     median 41 · worst 109 · and degrading (first five avg 18, last six avg 59)
+#
+# None of those runs landed on the requested slots. GitHub documents the
+# `schedule` event as best-effort, delayed under load and skipped entirely when
+# busy; a */15 cron behaves like an hourly one in practice.
+#
+# ⚠ THE SLOTS ARE KEPT ANYWAY, DELIBERATELY. Asking for four an hour and being
+# given one is strictly better than asking for one: on quiet nights GitHub does
+# deliver several. What was corrected is the CLAIM, not the request. If a future
+# reader "fixes" this to an honest hourly cron, they will lose the extra runs and
+# gain nothing.
+#
+# ⚠ AND THE DEAD-MAN'S SWITCH MUST BE SIZED FROM THE MEASUREMENT, NOT FROM THIS
+# CRON. It is set to period 60 / grace 30 at healthchecks.io. The first
+# configuration used period 15 / grace 20 — sized from the number I wanted to be
+# true rather than from any observation — and produced EIGHT downtime mails in
+# one night against a probe that had never actually stopped. That is the exact
+# alert-fatigue failure checks.mjs argues against at length, manufactured inside
+# the tool built to prevent it.
 #
 # ⚠ THE 15-MINUTE CADENCE IS FREE ONLY BECAUSE THIS REPOSITORY IS PUBLIC.
 # GitHub bills Actions in whole minutes per job, so this workflow alone is

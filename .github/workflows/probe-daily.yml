@@ -46,7 +46,7 @@ jobs:
       # ⚠ No --deadman here. The liveness signal belongs to exactly one suite,
       # and it is the fast one. Pinging from two schedules would mean the
       # daily run alone could keep the switch looking healthy while the
-      # 15-minute probe had silently stopped — which is the precise failure the
+      # fast probe had silently stopped — which is the precise failure the
       # switch exists to catch.
       - name: Run the daily probe
         run: node probe.mjs --suite daily

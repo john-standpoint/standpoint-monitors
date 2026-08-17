@@ -58,17 +58,47 @@ is a **hard failure** rather than a skipped step.
 
 | Suite | Cadence | Severities | Checks |
 |---|---|---|---|
-| `fast` | every 15 min | page | home · availability · scan health |
+| `fast` | **~hourly, best-effort** (asks for every 15 min) | page | home · availability · scan health |
 | `daily` | 06:07 UTC | page + warn | + robots.txt |
 | `weekly` | Mon 06:23 UTC | page + warn | + sitemap · hidden page |
+
+### ⚠ The fast suite does NOT run every 15 minutes, and this table used to say it did
+
+Measured over the first night (2026-08-16/17) from the dead-man's switch's own ping log —
+gaps between consecutive successful runs, in minutes:
+
+```
+20, 10, 27, 21, 11, 109, 59, 47, 47, 50, 41
+median 41 · worst 109 · degrading (first five avg 18, last six avg 59)
+```
+
+None landed on the requested slots. GitHub documents the `schedule` event as best-effort:
+delayed under load, and skipped outright when busy. **A `*/15` cron behaves like an hourly
+one.**
+
+The cron still asks for four an hour, deliberately — asking for four and getting one beats
+asking for one, and on quiet nights GitHub does deliver several. **What was corrected is
+the claim, not the request.**
+
+⚠ **The dead-man's switch must be sized from that measurement, not from the cron.** It is
+period **60 min**, grace **30 min**. The first configuration used 15/20 — sized from the
+number I wanted to be true rather than from any observation — and produced **eight downtime
+mails in one night against a probe that had never actually stopped.** That is precisely the
+alert-fatigue failure this file argues against below, manufactured inside the tool built to
+prevent it.
+
+✅ **Recorded as a success too.** Nothing else could have caught this: every run that *did*
+happen was green, the Actions tab showed success, and a probe cannot observe its own
+absence. The dead-man's switch found a false claim in its own repository within 18 hours,
+which is the whole argument for it being one of three parts.
 
 **page** — the public product is broken for a visitor right now.
 **warn** — a control or bookkeeping path is wrong; nobody is turned away, but it will
 cost money, data or trust if left.
 
-A warning **turns a run red**. It just does not turn ninety-six runs a day red: `fast`
-filters warnings out, `daily` does not. One red daily run until it is fixed is loud
-enough to act on and quiet enough not to mute.
+A warning **turns a run red**. It just does not turn every fast run red: `fast` filters
+warnings out, `daily` does not. One red daily run until it is fixed is loud enough to act
+on and quiet enough not to mute.
 
 ⚠ The tempting alternative — print the warning and exit 0 — recreates the exact failure
 this repository was built after. A warning that only reaches a log reaches nobody.
@@ -134,10 +164,13 @@ Bright Data leg: **a silent fallback reads exactly like a passing check.**
 
 ## Cost
 
-⚠ **The 15-minute cadence is free only because this repository is public.** GitHub bills
-Actions in whole minutes per job, so `probe-fast` alone is ~2,880 minutes a month —
-above the 2,000-minute free tier for a private repository. **If this repo is ever made
-private, drop that cron to hourly**, or the overage arrives silently.
+⚠ **The requested cadence is free only because this repository is public.** GitHub bills
+Actions in whole minutes per job. A `*/15` cron *asks* for ~2,880 minutes a month — above
+the 2,000-minute free tier for a private repository — even though GitHub currently
+delivers closer to a third of that. **If this repo is ever made private, drop that cron to
+hourly**, or the overage arrives silently. ⚠ **Do not size that decision from what GitHub
+happens to deliver today**: the request is what would be billed if the scheduler ever ran
+it as asked.
 
 Nothing here contains a secret: all live in GitHub Secrets, and every URL probed is
 already public.
