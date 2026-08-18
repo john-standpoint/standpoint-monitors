@@ -64,12 +64,14 @@ is a **hard failure** rather than a skipped step.
 
 ### ⚠ The fast suite does NOT run every 15 minutes, and this table used to say it did
 
-Measured over the first night (2026-08-16/17) from the dead-man's switch's own ping log —
-gaps between consecutive successful runs, in minutes:
+Measured from the dead-man's switch's own ping log — **31 gaps between consecutive
+successful runs over two nights** (2026-08-16 → 18), in minutes:
 
 ```
-20, 10, 27, 21, 11, 109, 59, 47, 47, 50, 41
-median 41 · worst 109 · degrading (first five avg 18, last six avg 59)
+10 11 20 20 20 21 21 21 22 27 29 31 33 33 33 35 36 39 41 42
+46 47 47 49 50 51 52 59 62 98 109
+
+median 35 · p95 98 · max 109
 ```
 
 None landed on the requested slots. GitHub documents the `schedule` event as best-effort:
@@ -80,17 +82,32 @@ The cron still asks for four an hour, deliberately — asking for four and getti
 asking for one, and on quiet nights GitHub does deliver several. **What was corrected is
 the claim, not the request.**
 
-⚠ **The dead-man's switch must be sized from that measurement, not from the cron.** It is
-period **60 min**, grace **30 min**. The first configuration used 15/20 — sized from the
-number I wanted to be true rather than from any observation — and produced **eight downtime
-mails in one night against a probe that had never actually stopped.** That is precisely the
-alert-fatigue failure this file argues against below, manufactured inside the tool built to
-prevent it.
+### ⚠⚠ The dead-man's threshold was wrong twice. Read this before tightening it.
 
-✅ **Recorded as a success too.** Nothing else could have caught this: every run that *did*
-happen was green, the Actions tab showed success, and a probe cannot observe its own
-absence. The dead-man's switch found a false claim in its own repository within 18 hours,
-which is the whole argument for it being one of three parts.
+| Setting | Tolerance | Result |
+|---|---|---|
+| period 15 / grace 20 | 35 min | **8 false alarms in one night** |
+| period 60 / grace 30 | 90 min | **1 false alarm** — a 98-min gap |
+| **period 60 / grace 90** | **150 min** | 0 breaches over 31 gaps, ~37% headroom |
+
+The first was sized from the cron the workflow *asks* for. The second was sized the morning
+after the measurement — **from a dataset whose maximum was 109 minutes, to a threshold of
+90.** Set below a number sitting in the data used to justify it.
+
+⚠ **"Size it from the measurement" is not satisfied by having taken a measurement.** Size
+it from the **maximum**, with headroom.
+
+⚠ **THE COSTS ARE NOT COMPARABLE, WHICH IS WHY THE THRESHOLD SITS WELL ABOVE THE MAXIMUM
+RATHER THAN NEAR IT.** A false alarm costs trust in every alert this system will ever
+send — the failure this file argues against at length. A late alarm costs an extra hour of
+not knowing that **the monitor** has stopped; the site itself keeps mailing on every run
+that happens.
+
+✅ **Recorded as a success too.** Nothing else could have caught any of it: every run that
+*did* happen was green, the Actions tab showed success, the external uptime monitor saw a
+healthy site. **A probe cannot observe its own absence.** The switch found a false cadence
+claim in its own repository within 18 hours of going live, then caught its own
+miscalibration the night after. That is the whole argument for it being one of three parts.
 
 **page** — the public product is broken for a visitor right now.
 **warn** — a control or bookkeeping path is wrong; nobody is turned away, but it will

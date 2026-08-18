@@ -150,21 +150,32 @@ nothing to report.
 
 1. Sign up free at <https://healthchecks.io> and create a check:
    - **Name:** `standpoint-monitors fast probe`
-   - **Period:** `60 minutes`
-   - **Grace time:** `30 minutes`
+   - **Period:** `1 hour`
+   - **Grace time:** `90 minutes`
 
-   ⚠⚠ **THESE NUMBERS ARE MEASURED, AND THE FIRST ONES WERE NOT.** This originally said
-   period 15 / grace 20, sized from the cron the workflow *asks* for. GitHub does not
-   deliver that cadence — observed gaps on the first night were
-   `20, 10, 27, 21, 11, 109, 59, 47, 47, 50, 41` minutes, median 41 — so the switch
-   flapped and sent **eight downtime mails in one night about a probe that had never
-   stopped.** Sizing an alert from a number you wish were true is the same error as
-   setting a latency threshold from a cold start, which this repo refuses to do and warns
-   about in three places.
+   ⚠⚠ **THESE VALUES WERE WRONG TWICE, AND THE SECOND TIME THE DATA WAS ALREADY IN HAND.**
+   Worth reading before anyone "tightens" them.
 
-   ⚠ **Detection of a fully-dead probe is therefore ~90 minutes, and that is fine.** The
-   dead-man's switch is **not** the outage detector — page-level failures still mail on any
-   run that happens. Its only question is "has the probe stopped entirely".
+   - **First:** period 15 / grace 20, sized from the cron the workflow *asks* for. GitHub
+     does not deliver that cadence. **Eight false downtime mails in one night** against a
+     probe that had never stopped.
+   - **Second:** period 60 / grace 30 — a **90-minute tolerance** — chosen the morning
+     after, from a measurement whose **maximum gap was 109 minutes**. The threshold was set
+     *below a number sitting in the data being used to justify it.* It tripped that night
+     on a 98-minute gap.
+
+   **31 gaps measured over two nights:** median **35**, p95 **98**, **max 109**.
+   Tolerance 90 → 2 breaches. Tolerance 120 → 0, but only 11 minutes over a two-night
+   maximum. **Tolerance 150 → 0, with about 37% headroom.** Hence 60 + 90.
+
+   ⚠ **THE COSTS ARE NOT COMPARABLE, WHICH IS WHY THE THRESHOLD SITS WELL ABOVE THE
+   MAXIMUM RATHER THAN NEAR IT.** A false alarm costs trust in every alert this system will
+   ever send. A late alarm costs an extra hour of not knowing that **the monitor** has
+   stopped — not the site, which keeps mailing on every run that happens. Detection of a
+   fully-dead probe is ~2.5 hours, and that is the right trade, not a concession.
+
+   ⚠ **"Size it from the measurement" is not satisfied by having taken a measurement.**
+   Size it from the *maximum*, with headroom.
 2. Copy its **ping URL** (looks like `https://hc-ping.com/<uuid>`).
 3. In the repo: **Settings → Secrets and variables → Actions → New repository secret**
    - **Name:** `DEADMAN_URL` — exactly this, case-sensitive

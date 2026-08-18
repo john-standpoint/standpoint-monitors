@@ -24,13 +24,27 @@ name: Probe · fast (best-effort, ~hourly in practice)
 # reader "fixes" this to an honest hourly cron, they will lose the extra runs and
 # gain nothing.
 #
-# ⚠ AND THE DEAD-MAN'S SWITCH MUST BE SIZED FROM THE MEASUREMENT, NOT FROM THIS
-# CRON. It is set to period 60 / grace 30 at healthchecks.io. The first
-# configuration used period 15 / grace 20 — sized from the number I wanted to be
-# true rather than from any observation — and produced EIGHT downtime mails in
-# one night against a probe that had never actually stopped. That is the exact
-# alert-fatigue failure checks.mjs argues against at length, manufactured inside
-# the tool built to prevent it.
+# ⚠⚠ AND THE DEAD-MAN'S SWITCH MUST BE SIZED FROM THE MAXIMUM OF THAT
+# MEASUREMENT, NOT FROM THIS CRON AND NOT FROM ITS MEDIAN. It is set to period
+# 60 / grace 90 at healthchecks.io — a 150-minute tolerance. It took two wrong
+# answers to get there, and the second is the instructive one:
+#
+#   period 15 / grace 20   35 min   EIGHT false alarms in one night
+#   period 60 / grace 30   90 min   one false alarm, on a 98-minute gap
+#   period 60 / grace 90  150 min   0 breaches over 31 gaps, ~37% headroom
+#
+# The first was sized from the cron this file ASKS for. The second was sized the
+# morning after the measurement above — from a dataset whose MAXIMUM WAS 109
+# MINUTES, to a threshold of 90. Set below a number sitting in the very data
+# used to justify it. "Size it from the measurement" is not satisfied by having
+# taken a measurement.
+#
+# ⚠ The costs are not comparable, which is why the threshold sits well above the
+# maximum rather than near it. A false alarm costs trust in every alert this
+# system will ever send — the exact alert-fatigue failure checks.mjs argues
+# against, manufactured inside the tool built to prevent it. A late alarm costs
+# an extra hour of not knowing that the MONITOR has stopped; the site itself
+# keeps mailing on every run that happens.
 #
 # ⚠ THE 15-MINUTE CADENCE IS FREE ONLY BECAUSE THIS REPOSITORY IS PUBLIC.
 # GitHub bills Actions in whole minutes per job, so this workflow alone is
