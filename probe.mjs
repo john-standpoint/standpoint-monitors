@@ -474,6 +474,44 @@ export function alertBody({ results, allowed }, suiteName, env = process.env) {
 }
 
 /*
+ * ⚠⚠ WHETHER A PING WAS ACCEPTED IS ITS OWN FUNCTION, AND THIS IS WHY.
+ *
+ * The first version of this rule read: "the body must start with OK". It was
+ * written by applying this repository's founding principle — READ THE BODY, NOT
+ * THE STATUS — and it was wrong, and it took all three suites down on their
+ * first live run. The auto-provisioning ping that CREATES each check answers
+ * `HTTP 201` with the body `Created`, so the guard rejected the one response
+ * that meant everything had worked.
+ *
+ * ⚠ THE PRINCIPLE IS A STATEMENT ABOUT A PARTICULAR SERVICE, NOT A LAW OF HTTP.
+ * It holds for `scan.standpoint.ch/api/health`, which answers 200 while broken.
+ * It holds for healthchecks' UUID endpoints, which answer `200 OK (not found)`
+ * for a check that does not exist. It does NOT hold for healthchecks' SLUG
+ * endpoints, which return real status codes — 200, 201, 404, 409, 429 — where
+ * the body adds nothing the status has not already said. Applying it as a law
+ * produced a check that failed a correct response, which is the failure mode
+ * that teaches people to work around checks.
+ *
+ * So: status decides, and the known lying bodies are rejected explicitly. Pure,
+ * exported, and tested — the previous version could not be tested at all,
+ * because it was buried inside a function that makes a network call.
+ */
+export function alertPingAccepted(status, body) {
+  const text = String(body ?? "").trim();
+
+  /*
+   * The three phrases healthchecks returns behind a 200 when it has in fact
+   * ignored the ping. Rejected by name rather than by pattern-guessing.
+   */
+  if (/not found/i.test(text)) return false;
+  if (/rate limit/i.test(text)) return false;
+  if (/ambiguous/i.test(text)) return false;
+
+  /* 200 OK on an existing check, 201 Created on first contact. Both are real. */
+  return status >= 200 && status < 300;
+}
+
+/*
  * ⚠ ASKED FOR AND MISSING IS A HARD FAILURE, exactly as with DEADMAN_URL and
  * for the same reason: a silent skip here means the diagnosis goes nowhere while
  * every run looks identical to one where it arrived.
@@ -499,15 +537,14 @@ async function pingAlert(outcome, suiteName, code) {
       body: code === 0 ? "" : alertBody(outcome, suiteName),
       signal: AbortSignal.timeout(10_000),
     });
-    console.log(`  alert channel (${code === 0 ? "clear" : "FAIL"}): HTTP ${response.status}`);
-    /*
-     * ⚠ healthchecks answers 200 with the string "not found" for an unknown
-     * check rather than a 404, so response.ok alone would call a misrouted alert
-     * a delivered one. Read the body.
-     */
     const text = (await response.text()).trim();
-    if (!response.ok || !/^OK/i.test(text)) {
-      console.error(`  ✗ alert channel did not accept the ping — body was: ${text.slice(0, 120)}`);
+    console.log(`  alert channel (${code === 0 ? "clear" : "FAIL"}): HTTP ${response.status} ${text}`);
+    if (!alertPingAccepted(response.status, text)) {
+      console.error(
+        `  ✗ alert channel did not accept the ping — HTTP ${response.status}, body: ${text.slice(0, 120)}\n` +
+          `    404 means the ping key is wrong. 400 means the slug is malformed.\n` +
+          `    A 200 saying "not found" means the key is valid but the check is not.`,
+      );
       return false;
     }
     return true;

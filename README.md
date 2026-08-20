@@ -190,6 +190,20 @@ deliberately loose (`SETUP.md` step 7b) because liveness belongs to the dead-man
 which is calibrated, proven, and pinged by exactly one suite. These exist only to carry
 text.
 
+⚠⚠ **AND THE FIRST VERSION OF THIS BROKE ALL THREE SUITES, BY APPLYING THE RULE AT THE TOP
+OF THIS FILE WHERE IT DOES NOT HOLD.** The acceptance check required the response body to
+start with `OK` — reasoning from *read the body, not the status*. The ping that
+**auto-provisions** a check answers `HTTP 201` with the body `Created`, so the guard
+rejected the one response that meant everything had worked, and every suite exited 3 on its
+first live run.
+
+**The rule is a statement about a particular service, not a law of HTTP.** It holds for
+`/api/health`, which answers 200 while broken. It holds for healthchecks' **UUID**
+endpoints, which answer `200 OK (not found)` for a check that does not exist. It does not
+hold for healthchecks' **slug** endpoints, which return honest status codes. The decision
+now lives in `alertPingAccepted(status, body)` — pure, exported, and tested, which the
+original could not be, because it was buried inside a function that makes a network call.
+
 ⚠ **A missing `HC_PING_KEY` under `--alert` is a hard failure, exit 3** — and a *clean* run
 whose alert channel is broken exits 3 as well, because nothing else would ever notice: the
 probe is green, GitHub is quiet, and the one path carrying a diagnosis is dead until the

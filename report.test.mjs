@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PAGE, WARN } from "./checks.mjs";
-import { alertBody, annotation, report } from "./probe.mjs";
+import { alertBody, alertPingAccepted, annotation, report } from "./probe.mjs";
 
 /* Quieten the reporter; these tests are about the return value, not the prose. */
 const silence = () => {
@@ -307,6 +307,57 @@ test("the run URL is included when the environment has one, and OMITTED when it 
   const withoutEnv = alertBody(outcome([pageFail], [PAGE, WARN]), "fast", {});
   assert.ok(!withoutEnv.includes("actions/runs"), `invented a run URL:\n${withoutEnv}`);
   assert.ok(!withoutEnv.includes("undefined"), "a partial environment must not produce a broken URL");
+});
+
+/* ------------------------------------------------------------------------ *
+ * Was the ping accepted? — the rule that took all three suites down
+ * ------------------------------------------------------------------------ */
+
+/*
+ * ⚠ THE BUG THESE EXIST FOR, RECORDED SO IT IS NOT REINTRODUCED BY SOMEONE
+ * APPLYING THIS REPOSITORY'S OWN RULE.
+ *
+ * The first version required the body to start with "OK", reasoning from READ
+ * THE BODY, NOT THE STATUS. Every suite went red on its first live run with
+ * exit 3: the auto-provisioning ping that CREATES a check answers `HTTP 201
+ * Created`, and the guard rejected the response that meant success.
+ *
+ * The principle describes `scan.standpoint.ch/api/health` and healthchecks'
+ * UUID endpoints. It does not describe healthchecks' SLUG endpoints, which
+ * return honest status codes. A check that fails a CORRECT response is worse
+ * than no check: it teaches people to route around it.
+ */
+
+test("⚠ 201 Created is ACCEPTED — this is the auto-provisioning ping, and rejecting it broke everything", () => {
+  assert.equal(alertPingAccepted(201, "Created"), true);
+});
+
+test("200 OK is accepted — the ordinary ping to a check that already exists", () => {
+  assert.equal(alertPingAccepted(200, "OK"), true);
+});
+
+test("a 200 that says 'not found' is REJECTED — healthchecks lies with the status here", () => {
+  /*
+   * The UUID endpoints answer 200 for a check that does not exist. That case is
+   * real and is why the original instinct was not silly — just misapplied.
+   */
+  assert.equal(alertPingAccepted(200, "OK (not found)"), false);
+});
+
+test("a rate-limited ping is REJECTED — it was accepted by the server and then ignored", () => {
+  assert.equal(alertPingAccepted(200, "OK (rate limited)"), false);
+});
+
+test("404, 409 and 400 are rejected, and each means something different", () => {
+  assert.equal(alertPingAccepted(404, "not found"), false, "wrong ping key");
+  assert.equal(alertPingAccepted(409, "ambiguous slug"), false, "the slug matches two checks");
+  assert.equal(alertPingAccepted(400, "invalid url format"), false, "malformed slug");
+});
+
+test("a 500 is rejected, and an empty body does not accidentally pass", () => {
+  assert.equal(alertPingAccepted(500, ""), false);
+  assert.equal(alertPingAccepted(200, ""), true, "an empty body on a 200 is not a known lie");
+  assert.equal(alertPingAccepted(undefined, undefined), false, "no status is not a success");
 });
 
 test("a partial GitHub environment produces NO url rather than a broken one", () => {
