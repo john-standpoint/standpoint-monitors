@@ -120,6 +120,42 @@ on and quiet enough not to mute.
 ⚠ The tempting alternative — print the warning and exit 0 — recreates the exact failure
 this repository was built after. A warning that only reaches a log reaches nobody.
 
+## ⚠ The alert has to carry the diagnosis, or the log is where it dies
+
+Every failure line names three things — what was checked, what was expected, and **what
+was actually observed** — because the observed value is usually the whole answer.
+`ticket=off` is not a symptom to investigate; it is the diagnosis.
+
+**GitHub's failure notification drops exactly that part.** Discovered 2026-08-16 by
+running the deliberate failure in `SETUP.md` step 7 rather than by reading any code: the
+mail said *"All jobs have failed"* and *"Failed in 7 seconds"*, while
+
+```
+Sitemap has LOST pages — 44 URLs, floor is 9999
+```
+
+sat one click away, behind a login, on a phone, at night. An alert that costs a debugging
+session to interpret is an alert that gets opened later each time.
+
+So since 2026-08-20 `report()` emits every failure a **second** time as a GitHub workflow
+annotation — `::error::` for a page, `::warning::` for a warn — which GitHub *does* put in
+the notification. The console lines are for someone already reading the log; the
+annotations are for someone who is not.
+
+⚠ **They are emitted unconditionally, not gated on `GITHUB_ACTIONS`.** The tidier version
+has a state in which the annotations are silently off and reports identically to the
+working one. Outside Actions these are two extra lines of text; inside it there is no
+branch that can be wrong.
+
+⚠ **When all targets fail at the transport layer, that notice is annotated FIRST**, because
+it changes what every annotation under it means. Six red hosts is a convincing picture of
+a catastrophe and was wrong the one time it happened.
+
+⚠ **No test in this repository can prove the mail.** `report.test.mjs` proves the
+annotation is well-formed, one-line, correctly escaped and carries the observed value.
+Whether GitHub surfaces it in the notification is settled only by `SETUP.md` step 7, in a
+real inbox.
+
 ## What is checked
 
 1. **Homepage is the live build.** Canonical on `standpoint.ch`, `index, follow`, no

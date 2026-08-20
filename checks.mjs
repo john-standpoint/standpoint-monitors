@@ -267,7 +267,19 @@ export function checkScanHealth({ status, body }) {
   try {
     payload = JSON.parse(body);
   } catch {
-    return [bad(id, PAGE, "/api/health did not return parseable JSON.", body.slice(0, 200))];
+    /*
+     * ⚠ AN EMPTY BODY HAS TO SAY SO — found on 2026-08-20 by watching a real
+     * failing run rather than by reading this line. `"".slice(0, 200)` is the
+     * empty string, so the failure rendered `observed:` followed by nothing,
+     * which reads as a field the check forgot to fill rather than as the
+     * finding itself. It is also exactly the shape a transport failure takes
+     * (status 0, body ""), i.e. the case where naming it saves the reader from
+     * going off to debug malformed JSON that was never served at all.
+     */
+    const observed = body
+      ? body.slice(0, 200)
+      : `HTTP ${status}, EMPTY BODY — no bytes at all, which usually means unreachable rather than malformed`;
+    return [bad(id, PAGE, "/api/health did not return parseable JSON.", observed)];
   }
 
   /*

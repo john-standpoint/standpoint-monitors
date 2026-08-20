@@ -244,9 +244,26 @@ Actions → **Probe · weekly** → **Run workflow**.
 
 ```
   ✗ PAGE  sitemap: Sitemap has LOST pages — 44 URLs, floor is 9999.
+::error title=PAGE sitemap · suite weekly::Sitemap has LOST pages — 44 URLs, floor is 9999.%0Aobserved: 44 URLs
 ```
 
-and **an email arrives.** Then put it back:
+and **an email arrives.**
+
+⚠ **Read the mail, do not just confirm it arrived.** The first time this step was run
+(2026-08-16) the mail said *"All jobs have failed"* and *"Failed in 7 seconds"* and
+nothing else — the sentence naming what broke sat one click away in the run log, behind
+a login, on a phone, at night. The `::error::` line above exists to fix exactly that, and
+it is the reason this step now has an acceptance criterion of its own:
+
+> **The observed value — `44 URLs, floor is 9999` — must appear in the email body or in
+> the run's annotation block, without opening the log.**
+
+If it does not, the annotations are not reaching the notification and the change that
+added them is not doing its job. That is a finding worth recording, not a detail to wave
+through: **the whole point is that an alert should not cost a debugging session to
+interpret.**
+
+Then put it back:
 
 ```sh
 cd ~/Developer/standpoint-monitors

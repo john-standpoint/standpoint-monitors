@@ -252,6 +252,21 @@ test("scan health: the real served bytes pass", () => {
   assert.equal(failures(checkScanHealth({ status: 200, body: GOOD_HEALTH })).length, 0);
 });
 
+test("⚠ scan health: AN EMPTY BODY IS NAMED, not reported as an empty observed value", () => {
+  /*
+   * Found 2026-08-20 by reading a genuinely failing run: with no egress the
+   * body is "", and `body.slice(0, 200)` made the alert say `observed:` and
+   * then stop. An observed value that is blank is indistinguishable from a
+   * check that forgot to record one — the same ambiguity as an empty key file
+   * reading identically to an absent one, which cost nine days once.
+   */
+  const results = checkScanHealth({ status: 0, body: "" });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.ok(results[0].observed.trim().length > 0, "the observed value must not be blank");
+  assert.match(results[0].observed, /EMPTY BODY/);
+  assert.match(results[0].observed, /HTTP 0/, "the status belongs with it — 0 means unreachable");
+});
+
 test("scan health: THE 19-DAY OUTAGE — register 'admin-only' behind a 200 is caught", () => {
   /*
    * ⚠⚠ THE TEST THIS ENTIRE REPOSITORY EXISTS TO MAKE POSSIBLE.

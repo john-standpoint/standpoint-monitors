@@ -211,6 +211,69 @@ async function run(suiteName) {
 }
 
 /* ------------------------------------------------------------------------ *
+ * Annotations — getting the diagnosis into the alert itself
+ * ------------------------------------------------------------------------ */
+
+/*
+ * ⚠⚠ THE FAILURE MAIL DOES NOT CARRY THE DIAGNOSIS, AND THAT WAS FOUND BY
+ * RUNNING A DELIBERATE FAILURE RATHER THAN BY READING THE CODE.
+ *
+ * On 2026-08-16 the sitemap floor was set to 9999 on purpose to prove the
+ * alert path worked. It did: the mail arrived. But all it said was "All jobs
+ * have failed" and "Failed in 7 seconds". The actual answer —
+ *
+ *     Sitemap has LOST pages — 44 URLs, floor is 9999
+ *
+ * — was one click away, in the run log, behind a login, on a phone, at night.
+ * Every failure line in checks.mjs was written to name expected-vs-observed
+ * precisely so an alert would not cost a debugging session to interpret, and
+ * the notification dropped exactly that part.
+ *
+ * GitHub *does* surface workflow annotations in the failure notification. So
+ * the same three facts are emitted a second time as `::error::` / `::warning::`
+ * workflow commands. The console lines above are for a human reading the log;
+ * these are for the mail.
+ *
+ * ⚠ EMITTED UNCONDITIONALLY, NOT GATED ON `GITHUB_ACTIONS`. The tidier version
+ * checks the environment and stays quiet locally. That version has a state in
+ * which the annotations are silently off — a mistyped env name, a `act` run, a
+ * future workflow that clears the environment — and it reports exactly like the
+ * working one, which is this repository's signature bug. Outside Actions these
+ * lines are merely two extra lines of text; inside it there is no branch that
+ * can be wrong. Local noise is a cheaper price than a silent fallback.
+ */
+
+/*
+ * Escaping is not decoration: an unescaped newline TRUNCATES the annotation at
+ * that point, so the observed value — the whole reason for this — is the part
+ * that would go missing. Data and properties escape differently; `:` and `,`
+ * matter only inside the property list, where they are the delimiters.
+ */
+const escapeData = (value) =>
+  String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+
+const escapeProperty = (value) =>
+  escapeData(value).replace(/:/g, "%3A").replace(/,/g, "%2C");
+
+export function annotation(failure, suiteName) {
+  const isPage = failure.severity === PAGE;
+  /*
+   * ⚠ A MISSING `observed` IS NAMED, NEVER RENDERED AS "undefined". This line
+   * exists to carry the observed value; a check that forgot to record one is a
+   * defect in that check, and the annotation should say so rather than print a
+   * word that reads like a value.
+   */
+  const observed =
+    failure.observed === undefined || failure.observed === null || failure.observed === ""
+      ? "(NOT RECORDED — this check failed without an observed value, which is a defect in the check)"
+      : failure.observed;
+
+  const title = escapeProperty(`${isPage ? "PAGE" : "WARN"} ${failure.id} · suite ${suiteName}`);
+  const message = escapeData(`${failure.note}\nobserved: ${observed}`);
+  return `::${isPage ? "error" : "warning"} title=${title}::${message}`;
+}
+
+/* ------------------------------------------------------------------------ *
  * Reporting
  * ------------------------------------------------------------------------ */
 
@@ -257,6 +320,31 @@ export function report({ results, timings, allowed }, suiteName) {
         `    implausible. Check the runner's egress, then confirm by hand:\n` +
         `      curl -sS -o /dev/null -w '%{http_code}\\n' https://standpoint.ch/\n`,
     );
+    /*
+     * ⚠ ANNOTATED FIRST, DELIBERATELY, BECAUSE IT CHANGES WHAT THE OTHER SIX
+     * ANNOTATIONS MEAN. Without it the mail shows six red lines against six
+     * different hosts — a convincing picture of a catastrophe, and wrong the one
+     * time it actually happened. The reader spends the first ten minutes on the
+     * wrong system, which is the exact cost these annotations exist to remove.
+     *
+     * ⚠ It is also the only annotation that does not correspond to a check, so
+     * it is the first thing to delete if this ever needs trimming. Named here so
+     * that deleting it is a decision rather than a discovery.
+     */
+    console.log(
+      annotation(
+        {
+          id: "probe-egress",
+          severity: PAGE,
+          note: "ALL targets failed at the transport layer — read this as the probe's own network before reading it as an outage",
+          observed:
+            `${transportFailures} of ${fetched} targets unreachable. standpoint.ch (Infomaniak) and ` +
+            `scan.standpoint.ch (Vercel) are different providers, so simultaneous failure is implausible. ` +
+            `Check the runner's egress first.`,
+        },
+        suiteName,
+      ),
+    );
   }
 
   for (const pass of passes) console.log(`  ✓ ${pass.id}: ${pass.note}`);
@@ -268,6 +356,20 @@ export function report({ results, timings, allowed }, suiteName) {
     console.log(`  ✗ PAGE  ${failure.id}: ${failure.note}`);
     console.log(`          observed: ${failure.observed}`);
   }
+
+  /*
+   * ⚠ EMITTED AFTER the human-readable block and never instead of it. The two
+   * audiences are different — the log is read by someone already looking, the
+   * annotation reaches someone who is not — and collapsing them would mean
+   * losing one to tidy up the other.
+   *
+   * ⚠ Only failures the suite actually ALLOWS are annotated, so `fast` cannot
+   * annotate a warning it deliberately ignores. An annotation on a green run
+   * would be a red mark on a passing job: the cadence rule that keeps `ticket:
+   * off` from paging ninety-six times a day has to hold here too, or it is
+   * defeated through the mail instead of through the exit code.
+   */
+  for (const failure of [...pages, ...warns]) console.log(annotation(failure, suiteName));
 
   console.log(
     `\n  timings (recorded, NOT asserted on — no threshold until a week of warm samples exists):`,
