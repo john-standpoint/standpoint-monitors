@@ -238,7 +238,14 @@ down.
    separate on purpose — conflating them is what hid the 24-hour outage, and paging on
    `stale` would fire on ordinary healthy days.
 4. **Scan health** — `db` (page), `ticket`, `register` (warn), all read from the body.
-5. **Sitemap** has not lost pages, and every URL is on the live origin.
+5. **Sitemap** has not lost pages, and every URL is on the live origin. ⚠ It also
+   **warns when the floor has drifted** more than 10 pages below the live count — because
+   *"remember to raise the floor when you publish"* failed twice on 2026-08-20 alone: it
+   sat at 44 against a real 69 for four days, and the corrected 69 was stale within the
+   hour when 25 French pages landed. **The gap between the floor and reality is the
+   check's blind side, and nothing was measuring it.** A warning, never a page — publishing
+   is normal, nothing is broken for a visitor, and an alert that fires after ordinary work
+   is an alert that gets muted, taking the real "pages have disappeared" signal with it.
 6. **Hidden page** `/setup-a-session/` is still reachable **and** still absent from the
    sitemap — asserted in both directions, because a check that only asked "absent from
    the sitemap?" passes with flying colours on a page that has been deleted.

@@ -328,6 +328,56 @@ test("sitemap: pages DISAPPEARING fails, and growth does not", () => {
   assert.equal(failures(checkSitemap({ status: 200, body: grown }, { floor: 44 })).length, 0, "adding a page must not turn the probe red");
 });
 
+/*
+ * ⚠⚠ THE DRIFT WARNING — the check on the check, added 2026-08-20 after
+ * "remember to raise the floor" failed twice in one day.
+ *
+ * The floor sat at 44 for four days against a real count of 69, then the
+ * corrected 69 was stale within the hour when 25 French pages landed. Both were
+ * found by accident. Nothing was measuring the gap between the floor and
+ * reality — which IS the check's blind side.
+ */
+
+test("⚠ sitemap: DRIFT above the floor WARNS, naming how many pages could vanish unnoticed", () => {
+  const results = checkSitemap({ status: 200, body: GOOD_SITEMAP }, { floor: 20 });
+  const warns = failedWith(results, WARN);
+  assert.equal(warns.length, 1, "a 24-page gap must be reported");
+  assert.match(warns[0].note, /drifted/i);
+  assert.ok(warns[0].note.includes("44"), "it must name the number to raise the floor TO");
+  assert.ok(warns[0].observed.includes("24"), `the size of the blind spot is the finding: ${warns[0].observed}`);
+});
+
+test("⚠ sitemap: drift is a WARNING, NEVER a page failure", () => {
+  /*
+   * Publishing pages is normal and good, and nothing is broken for a visitor.
+   * A page-level failure here would fire after ordinary work, get muted, and
+   * take the real "pages have disappeared" signal down with it.
+   */
+  const results = checkSitemap({ status: 200, body: GOOD_SITEMAP }, { floor: 20 });
+  assert.equal(failedWith(results, PAGE).length, 0, "drift must never page");
+});
+
+test("sitemap: ordinary publishing does NOT warn — the slack exists so this is not noise", () => {
+  /*
+   * At zero slack this fires the day after every publication and becomes
+   * indistinguishable from noise, which is how a warning stops being read.
+   */
+  assert.equal(failures(checkSitemap({ status: 200, body: GOOD_SITEMAP }, { floor: 44 })).length, 0, "exactly at the floor");
+  assert.equal(failures(checkSitemap({ status: 200, body: GOOD_SITEMAP }, { floor: 38 })).length, 0, "six new pages is not yet a finding");
+  assert.equal(failures(checkSitemap({ status: 200, body: GOOD_SITEMAP }, { floor: 34 })).length, 0, "ten is the boundary, still quiet");
+});
+
+test("sitemap: LOSING pages still pages, and drift never masks it", () => {
+  /*
+   * The two conditions are opposite in direction and must not interfere: a
+   * sitemap cannot be simultaneously below its floor and drifting above it.
+   */
+  const shrunk = GOOD_SITEMAP.replace(/<loc>https:\/\/standpoint\.ch\/page-4[0-3]\/<\/loc>/g, "");
+  const results = checkSitemap({ status: 200, body: shrunk }, { floor: 44 });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.equal(failedWith(results, WARN).length, 0, "a shrinking sitemap must not also report drift");
+});
+
 test("sitemap: a sitemap full of staging URLs fails even though robots.txt would be clean", () => {
   /*
    * The "a check that reads the file NAMING a thing has not read the thing"

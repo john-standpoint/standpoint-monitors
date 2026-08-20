@@ -318,6 +318,17 @@ export function checkScanHealth({ status, body }) {
  * pointing at the live sitemap says nothing about what that sitemap contains,
  * and a sitemap full of staging URLs once satisfied every check in the estate.
  */
+/*
+ * ⚠ HOW MUCH DRIFT IS TOLERATED BEFORE THE WARNING FIRES, and why it is not 0.
+ *
+ * At 0 the warning fires the day after any page is published, every time, which
+ * makes it noise and gets it ignored — and an ignored warning is the exact
+ * failure this repository was built after. At 10 it fires when the gap has grown
+ * to something that would actually matter if those pages disappeared. Both of
+ * the real gaps observed so far — 25 pages, twice — clear it easily.
+ */
+const DRIFT_SLACK = 10;
+
 export function checkSitemap({ status, body }, { floor }) {
   const out = [];
   const id = "sitemap";
@@ -333,6 +344,44 @@ export function checkSitemap({ status, body }, { floor }) {
 
   if (urls.length < floor) {
     out.push(bad(id, PAGE, `Sitemap has LOST pages — ${urls.length} URLs, floor is ${floor}. Pages do not disappear on purpose.`, `${urls.length} < ${floor}`));
+  }
+
+  /*
+   * ⚠⚠ THE DRIFT WARNING — because "remember to raise the floor" is an
+   * instruction that has now failed twice in one day.
+   *
+   * The floor sat at 44 for four days while the site served 69, so the check
+   * could have watched 25 pages vanish and stayed green. It was corrected to 69
+   * at 16:16 on 2026-08-20 and was stale again by 17:16, when a different
+   * session published 25 French pages. Both gaps were found BY ACCIDENT, while
+   * testing something else.
+   *
+   * ⚠ THE CHECK'S BLIND SIDE IS THE DISTANCE BETWEEN THE FLOOR AND REALITY, AND
+   * NOTHING WAS MEASURING IT. A floor is a ratchet; a ratchet nobody ratchets is
+   * a number that silently stops meaning anything. So the gap is now reported.
+   *
+   * ⚠ WARN, NOT PAGE, AND THAT IS THE WHOLE DESIGN. Publishing pages is normal
+   * and good; nothing is broken for a visitor; John decides when to raise it. A
+   * page-level failure here would fire on a healthy day after ordinary work,
+   * which is how an alert gets muted — and a muted sitemap check takes the real
+   * "pages have disappeared" signal with it. ⚠ In practice this surfaces WEEKLY
+   * and only weekly, since the sitemap is only fetched by that suite: once a
+   * week is the right cadence for a chore, and would be far too slow for an
+   * incident. Another reason it must not be a page.
+   *
+   * ⚠ The slack is deliberately generous. A tight threshold would fire on every
+   * single publication and be indistinguishable from noise.
+   */
+  const drift = urls.length - floor;
+  if (drift > DRIFT_SLACK) {
+    out.push(
+      bad(
+        id,
+        WARN,
+        `Sitemap floor has drifted — ${drift} pages above the floor of ${floor}. That gap is how many pages could vanish unnoticed. Raise SITEMAP_FLOOR to ${urls.length}.`,
+        `${urls.length} served, floor ${floor}, blind to a loss of up to ${drift}`,
+      ),
+    );
   }
   const foreign = urls.filter((u) => !u.startsWith(`${LIVE_ORIGIN}/`));
   if (foreign.length) {
