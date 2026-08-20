@@ -60,18 +60,22 @@ const TARGETS = {
  * added; it exists to catch pages disappearing, which has never once been
  * intentional.
  *
- * 44 URLs were served on 2026-08-16. **69 on 2026-08-20** — and the floor had
- * been left at 44 the whole time, so the site could have lost TWENTY-FIVE pages
- * with the weekly check still green.
+ * 44 URLs were served on 2026-08-16. **69 at 16:16 on 2026-08-20. 94 at 17:16
+ * THE SAME DAY** — twenty-five more inside one hour, from a different session
+ * publishing the French interview pages.
  *
- * ⚠ THAT IS THE COST OF A RATCHET NOBODY RATCHETS, AND IT WAS FOUND BY
- * ACCIDENT: the number surfaced only because the floor was temporarily set to
- * 9999 to test an unrelated alert. Nothing in this repository notices a floor
- * drifting further and further below the real count — the check is asymmetric
- * by design, and its blind side widens every time a page is published.
- * Raising this is part of publishing pages, not a chore that can wait.
+ * ⚠ THAT IS THE COST OF A RATCHET NOBODY RATCHETS, AND BOTH NUMBERS WERE FOUND
+ * BY ACCIDENT: each surfaced only because the floor was temporarily set to 9999
+ * to test an alert. The floor sat at 44 for four days while the real count was
+ * 69, then the corrected 69 was stale within the hour. Nothing here notices a
+ * floor drifting below the real count — the check is asymmetric by design, and
+ * its blind side widens every time a page is published.
+ *
+ * ⚠⚠ SO THIS IS NOT A NUMBER TO SET ONCE. **Raising it is part of publishing
+ * pages.** A red weekly run after a deliberate content change means raise the
+ * floor; a red one after no change means find the missing pages.
  */
-const SITEMAP_FLOOR = 69;
+const SITEMAP_FLOOR = 94;
 
 /*
  * ⚠⚠ NO LATENCY THRESHOLD IS SET, AND THAT IS A DECISION, NOT AN OVERSIGHT.
