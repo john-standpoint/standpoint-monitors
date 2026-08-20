@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PAGE, WARN } from "./checks.mjs";
-import { annotation, report } from "./probe.mjs";
+import { alertBody, annotation, report } from "./probe.mjs";
 
 /* Quieten the reporter; these tests are about the return value, not the prose. */
 const silence = () => {
@@ -238,4 +238,81 @@ test("the transport-layer notice is annotated FIRST, so it frames the failures u
   const emitted = captured.lines.filter((l) => l.startsWith("::"));
   assert.ok(emitted[0].includes("probe-egress"), `egress notice not first: ${JSON.stringify(emitted)}`);
   assert.ok(emitted[0].includes("2 of 2"));
+});
+
+/* ------------------------------------------------------------------------ *
+ * The healthchecks body — the ONE path measured to reach an inbox
+ * ------------------------------------------------------------------------ */
+
+/*
+ * ⚠ GitHub's mail carries a COUNT of annotations. healthchecks.io's mail
+ * carries the POST body verbatim, under a "Last Ping Body" heading — measured
+ * 2026-08-20 against a throwaway check, because the docs never promise it.
+ *
+ * So this string is the alert. Not a log line that might be read; the text that
+ * lands on a phone. Everything below asserts on its CONTENT.
+ */
+
+test("the alert body carries every failure WITH ITS OBSERVED VALUE", () => {
+  const body = alertBody(outcome([pass, pageFail, warnFail], [PAGE, WARN]), "daily", {});
+  assert.ok(body.includes("HTTP 503"), `page failure's observed value missing:\n${body}`);
+  assert.ok(body.includes("ticket=off"), `warning's observed value missing:\n${body}`);
+  assert.ok(body.includes("broken") && body.includes("drifted"), "the expectations must travel too");
+  assert.ok(body.includes("daily"), "the suite name says which cadence found it");
+});
+
+test("the alert body does NOT carry passing checks — an alert is not a report", () => {
+  /*
+   * A body that lists everything makes the reader hunt for the red line on a
+   * phone at night. The log is where the full picture lives.
+   */
+  const body = alertBody(outcome([pass, pageFail], [PAGE, WARN]), "fast", {});
+  assert.ok(!body.includes("fine"), `passing check leaked into the alert:\n${body}`);
+});
+
+test("⚠ the alert body respects the SEVERITY FILTER, like the exit code and the annotations", () => {
+  /*
+   * Third place the same rule has to hold. If it were missed here, `ticket: off`
+   * would mail through healthchecks on every fast run — muted within a day,
+   * taking the page-level alerts with it.
+   */
+  const body = alertBody(outcome([pass, warnFail], [PAGE]), "fast", {});
+  assert.ok(!body.includes("ticket=off"), `fast suite leaked an ignored warning:\n${body}`);
+  assert.match(body, /0 failure\(s\)/);
+});
+
+test("a missing observed value is named in the alert body too, not printed as 'undefined'", () => {
+  const body = alertBody(
+    outcome([{ id: "x", severity: PAGE, ok: false, note: "n" }], [PAGE, WARN]),
+    "fast",
+    {},
+  );
+  assert.ok(!body.includes("undefined"), `alert body rendered undefined:\n${body}`);
+  assert.ok(body.includes("NOT RECORDED"));
+});
+
+test("the run URL is included when the environment has one, and OMITTED when it does not", () => {
+  /*
+   * One tap from the mail to the run. Built from the environment, never
+   * invented: a local run has no run to link to, and a fabricated URL in an
+   * alert is worse than no URL.
+   */
+  const withEnv = alertBody(outcome([pageFail], [PAGE, WARN]), "fast", {
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "john-standpoint/standpoint-monitors",
+    GITHUB_RUN_ID: "12345",
+  });
+  assert.ok(withEnv.includes("https://github.com/john-standpoint/standpoint-monitors/actions/runs/12345"));
+
+  const withoutEnv = alertBody(outcome([pageFail], [PAGE, WARN]), "fast", {});
+  assert.ok(!withoutEnv.includes("actions/runs"), `invented a run URL:\n${withoutEnv}`);
+  assert.ok(!withoutEnv.includes("undefined"), "a partial environment must not produce a broken URL");
+});
+
+test("a partial GitHub environment produces NO url rather than a broken one", () => {
+  const body = alertBody(outcome([pageFail], [PAGE, WARN]), "fast", {
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_RUN_ID: "12345",
+  });
+  assert.ok(!body.includes("actions/runs"), `built a URL from an incomplete environment:\n${body}`);
 });

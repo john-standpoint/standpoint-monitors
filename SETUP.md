@@ -260,17 +260,17 @@ annotations — next to the job name and *"Failed in 8 seconds"*. The remedy pro
 16 Aug had been written down as a fact and was never true. **This step is the only reason
 that was ever discovered**, which is the argument for never skipping it.
 
-**So the acceptance criterion is split, and only one half is currently met:**
+**So the acceptance criterion is split:**
 
-> ✅ **Run summary page** — the diagnosis must be in the red *Annotations* box on the
-> page "View workflow run" lands on, without opening the job log. **Met.**
+> ✅ **Run summary page** — the diagnosis is in the red *Annotations* box on the page
+> "View workflow run" lands on, without opening the job log. **Met by the annotations.**
 >
-> ❌ **Email body** — the observed value must appear in the mail itself. **Not met.** The
-> mail gives a count and no text. Open, with healthchecks.io's POST-body-on-`/fail` as the
-> untested next candidate.
+> ✅ **An inbox** — the observed value must reach a mail. **Met by healthchecks.io, not by
+> GitHub.** See step 7b. GitHub's own mail still carries only a count, and that is now
+> understood to be as good as it gets.
 
-Do not quietly downgrade the second line to match what the tool does. It is the
-requirement; what we have is a partial answer to it.
+Do not quietly downgrade the second line to match what one tool does. It was the
+requirement; it took a second channel to satisfy it.
 
 Then put it back:
 
@@ -285,7 +285,90 @@ git push
 
 ⚠ **Do not skip this step.** A monitor observed only passing is indistinguishable from
 one that cannot fail, and the mail path is the one part of the chain that no test in
-this repository can exercise.
+this repository can exercise. ⚠ Note the floor is now **69**, not 44 — see step 7b's
+closing warning about ratchets.
+
+---
+
+## Step 7b — The alert channel that actually carries the diagnosis
+
+**Why there is a step 7b at all:** step 7 proved GitHub's mail carries a *count* of
+annotations and none of their text. healthchecks.io's mail carries the POST body verbatim,
+under a **Last Ping Body** heading. That was measured on 2026-08-20 against a throwaway
+check before any code was written — ⚠ **the healthchecks docs never promise it**, they
+point only at the web UI. So this is the one path known to put a sentence in front of you.
+
+1. healthchecks.io → your project → **Settings** → **Ping key** → copy it. (One key for
+   the whole project; the probe derives a per-suite slug from it.)
+2. GitHub → repo → **Settings** → **Secrets and variables** → **Actions** → **New
+   repository secret**. Name `HC_PING_KEY`, paste the ping key.
+
+   ⚠ **Do this BEFORE pushing.** `--alert` with no key is a **hard failure, exit 3** — the
+   same rule as `DEADMAN_URL`, for the same reason: a diagnosis quietly going nowhere looks
+   exactly like one arriving. Push first and every run goes red until the secret exists.
+3. Push, then let one run of each suite happen (or fire them by hand). The probe creates
+   three checks on first ping via `create=1`:
+
+   ```
+   standpoint-probe-fast
+   standpoint-probe-daily
+   standpoint-probe-weekly
+   ```
+
+4. ⚠⚠ **NOW FIX THEIR PERIODS, OR THEY WILL LIE TO YOU.** An auto-provisioned check
+   defaults to a **one-day** period, so `standpoint-probe-weekly` — pinged once a week by
+   design — would go down every single day for being late, and you would mute it inside a
+   week, taking the real weekly alerts with it. In healthchecks, for each check:
+
+   | Check | Period | Grace |
+   |---|---|---|
+   | `standpoint-probe-fast` | 1 day | 1 day |
+   | `standpoint-probe-daily` | 1 day | 1 day |
+   | `standpoint-probe-weekly` | 30 days | 30 days |
+
+   These are deliberately loose. **These three checks are not liveness monitors** — that
+   job belongs to the dead-man's switch in step 5, which is calibrated and proven. Their
+   only job is to go down when the probe *tells* them to and mail you the reason. A period
+   tight enough to be meaningful here would only add a second, worse liveness signal.
+
+5. **Prove it end to end**, the same way step 7 does:
+
+   ```sh
+   cd ~/Developer/standpoint-monitors
+   sed -i '' 's/const SITEMAP_FLOOR = 69;/const SITEMAP_FLOOR = 9999;/' probe.mjs
+   git commit -am "TEMPORARY: prove the healthchecks alert carries the diagnosis"
+   git push
+   ```
+
+   Actions → **Probe · weekly** → **Run workflow**. **Expected:** a healthchecks mail
+   titled `DOWN | standpoint-probe-weekly` whose **Last Ping Body** reads
+
+   ```
+   standpoint-monitors · suite weekly · 1 failure(s)
+
+   PAGE  sitemap: Sitemap has LOST pages — 69 URLs, floor is 9999. …
+         observed: 69 < 9999
+
+   https://github.com/john-standpoint/standpoint-monitors/actions/runs/…
+   ```
+
+   Then revert:
+
+   ```sh
+   cd ~/Developer/standpoint-monitors
+   sed -i '' 's/const SITEMAP_FLOOR = 9999;/const SITEMAP_FLOOR = 69;/' probe.mjs
+   git commit -am "Revert the deliberate failure"
+   git push
+   ```
+
+   ⚠ The check stays **DOWN** until a weekly run passes. Re-run **Probe · weekly** by hand
+   after the revert to clear it — and note that this is the design working, not a bug: the
+   weekly check does not recover because an unrelated fast run went green.
+
+⚠⚠ **AND WHILE YOU ARE HERE — RAISE `SITEMAP_FLOOR` WHENEVER YOU PUBLISH PAGES.** It was
+left at 44 while the site grew to 69, so for four days the check could have watched
+**twenty-five pages** disappear and stayed green. Nothing notices a ratchet that is never
+ratcheted; its blind side widens with every page you publish.
 
 ---
 

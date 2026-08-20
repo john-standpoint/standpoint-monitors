@@ -266,18 +266,23 @@ const escapeData = (value) =>
 const escapeProperty = (value) =>
   escapeData(value).replace(/:/g, "%3A").replace(/,/g, "%2C");
 
+/*
+ * ⚠ A MISSING `observed` IS NAMED, NEVER RENDERED AS "undefined". Both the
+ * annotation and the healthchecks body exist to carry the observed value; a
+ * check that forgot to record one is a defect in that check, and the alert
+ * should say so rather than print a word that reads like a value.
+ *
+ * Shared by both paths deliberately — two copies of this rule would drift, and
+ * the one that drifted would be the one nobody was reading at the time.
+ */
+export const observedOf = (failure) =>
+  failure.observed === undefined || failure.observed === null || failure.observed === ""
+    ? "(NOT RECORDED — this check failed without an observed value, which is a defect in the check)"
+    : failure.observed;
+
 export function annotation(failure, suiteName) {
   const isPage = failure.severity === PAGE;
-  /*
-   * ⚠ A MISSING `observed` IS NAMED, NEVER RENDERED AS "undefined". This line
-   * exists to carry the observed value; a check that forgot to record one is a
-   * defect in that check, and the annotation should say so rather than print a
-   * word that reads like a value.
-   */
-  const observed =
-    failure.observed === undefined || failure.observed === null || failure.observed === ""
-      ? "(NOT RECORDED — this check failed without an observed value, which is a defect in the check)"
-      : failure.observed;
+  const observed = observedOf(failure);
 
   const title = escapeProperty(`${isPage ? "PAGE" : "WARN"} ${failure.id} · suite ${suiteName}`);
   const message = escapeData(`${failure.note}\nobserved: ${observed}`);
@@ -402,6 +407,117 @@ export function report({ results, timings, allowed }, suiteName) {
 }
 
 /* ------------------------------------------------------------------------ *
+ * The alert channel — the only path proven to put the diagnosis in an inbox
+ * ------------------------------------------------------------------------ */
+
+/*
+ * ⚠⚠ THIS EXISTS BECAUSE GITHUB'S MAIL CARRIES A COUNT, NOT THE TEXT.
+ *
+ * Measured 2026-08-20, twice, and the two results are the whole design:
+ *
+ *   GitHub failure mail    "All jobs have failed" · "Annotations 💬 3"
+ *                          — the number of annotations. Not one word of them.
+ *   healthchecks.io mail   a "Last Ping Body" heading with the POST body
+ *                          printed verbatim underneath.
+ *
+ * ⚠ The healthchecks DOCS do not promise the second one. "Attaching Logs" says
+ * the body is stored and points at the web UI's Events section; nothing in it
+ * mentions notifications. It was tested against a throwaway check before any of
+ * this was written, because the previous remedy in this file was believed on the
+ * strength of a plausible sentence and turned out to be false. THE TEST IS THE
+ * REASON THIS IS HERE, not the documentation.
+ *
+ * ⚠ PER-SUITE CHECKS, VIA SLUG URLS, AND THAT IS NOT AN AESTHETIC CHOICE.
+ * With a single shared check, a weekly sitemap failure would alert — and then
+ * the next fast run, up to an hour later, would post success and healthchecks
+ * would mail "UP" while the sitemap was still short 25 pages. A recovery notice
+ * for something that has not recovered is worse than no notice: it is the
+ * green-while-blind shape, delivered by mail. Per-suite, a weekly failure stays
+ * down until a WEEKLY run passes.
+ *
+ * Slug URLs mean one secret instead of three, and `create=1` means the checks
+ * provision themselves on first ping. ⚠ Their PERIOD must then be set long by
+ * hand — an auto-provisioned check defaults to one day, so the weekly one would
+ * go down every day for the crime of being weekly. SETUP.md step 9 covers it.
+ */
+const ALERT_SLUG = (suiteName) => `standpoint-probe-${suiteName}`;
+
+/*
+ * The body is plain text on purpose. It is read in a mail client, on a phone,
+ * by someone who was doing something else — not parsed.
+ */
+export function alertBody({ results, allowed }, suiteName, env = process.env) {
+  const failures = results.filter((r) => !r.ok && allowed.has(r.severity));
+  const lines = [];
+
+  lines.push(`standpoint-monitors · suite ${suiteName} · ${failures.length} failure(s)`);
+  lines.push("");
+
+  for (const failure of failures) {
+    lines.push(`${failure.severity === PAGE ? "PAGE" : "WARN"}  ${failure.id}: ${failure.note}`);
+    lines.push(`      observed: ${observedOf(failure)}`);
+  }
+
+  /*
+   * The run URL earns its place: it turns "something is wrong" into one tap.
+   * Built from the environment rather than hard-coded, and simply omitted when
+   * absent — a local run has no run to link to, and inventing one would be worse
+   * than saying nothing.
+   */
+  const { GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID } = env;
+  if (GITHUB_SERVER_URL && GITHUB_REPOSITORY && GITHUB_RUN_ID) {
+    lines.push("");
+    lines.push(`${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`);
+  }
+
+  return lines.join("\n");
+}
+
+/*
+ * ⚠ ASKED FOR AND MISSING IS A HARD FAILURE, exactly as with DEADMAN_URL and
+ * for the same reason: a silent skip here means the diagnosis goes nowhere while
+ * every run looks identical to one where it arrived.
+ */
+async function pingAlert(outcome, suiteName, code) {
+  const key = process.env.HC_PING_KEY;
+  if (!key) {
+    console.error(
+      "\n✗ --alert was requested but HC_PING_KEY is not set.\n" +
+        "  Refusing to exit 0 on a probe whose diagnosis goes nowhere.\n" +
+        "  Set the HC_PING_KEY repository secret, or drop the --alert flag deliberately.\n",
+    );
+    return false;
+  }
+
+  const base = `https://hc-ping.com/${key}/${ALERT_SLUG(suiteName)}`;
+  const url = code === 0 ? `${base}?create=1` : `${base}/fail?create=1`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      /* Only a failing run has anything to say. A clean one just clears the state. */
+      body: code === 0 ? "" : alertBody(outcome, suiteName),
+      signal: AbortSignal.timeout(10_000),
+    });
+    console.log(`  alert channel (${code === 0 ? "clear" : "FAIL"}): HTTP ${response.status}`);
+    /*
+     * ⚠ healthchecks answers 200 with the string "not found" for an unknown
+     * check rather than a 404, so response.ok alone would call a misrouted alert
+     * a delivered one. Read the body.
+     */
+    const text = (await response.text()).trim();
+    if (!response.ok || !/^OK/i.test(text)) {
+      console.error(`  ✗ alert channel did not accept the ping — body was: ${text.slice(0, 120)}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error(`  ✗ alert channel ping failed: ${error.message}`);
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------------------ *
  * The dead-man's switch
  * ------------------------------------------------------------------------ */
 
@@ -468,8 +584,28 @@ if (isCli) {
   const suiteName = args.includes("--suite") ? args[args.indexOf("--suite") + 1] : "fast";
   const wantsDeadman = args.includes("--deadman");
 
+  const wantsAlert = args.includes("--alert");
+
   const outcome = await run(suiteName);
   const code = report(outcome, suiteName);
+
+  /*
+   * ⚠ THE ALERT GOES FIRST, BEFORE THE DEAD-MAN'S SWITCH AND BEFORE THE EXIT.
+   * It is the only leg that carries the diagnosis, so it is the one that must
+   * not be skipped by an early return added later in a hurry.
+   *
+   * ⚠ A failed ALERT does not change the exit code on a FAILING run — the run is
+   * already red and already mailing through GitHub. Overwriting a real code 1
+   * with a delivery-plumbing 3 would hide which of the two things is broken.
+   * On a CLEAN run there is nothing else to notice it, so it exits 3.
+   */
+  let alertDelivered = true;
+  if (wantsAlert) {
+    alertDelivered = await pingAlert(outcome, suiteName, code);
+    if (!alertDelivered && code !== 0) {
+      console.error("  ✗ …and the run itself failed. Two separate problems; fix the delivery one too.");
+    }
+  }
 
   /*
    * ⚠ PING ONLY ON A CLEAN RUN. A probe that pings while failing tells the
@@ -494,6 +630,22 @@ if (isCli) {
       }
     }
   }
+
+  /*
+   * ⚠ A CLEAN RUN WHOSE ALERT CHANNEL IS BROKEN EXITS 3. Nothing else would
+   * ever notice: the probe is green, GitHub is quiet, and the one path that
+   * carries a diagnosis is dead — which is only discovered on the day it is
+   * needed. Same reasoning as the missing DEADMAN_URL, one layer out.
+   *
+   * ⚠⚠ THIS BRANCH HAS NEVER EXECUTED. It needs a run that is simultaneously
+   * green and unable to reach hc-ping.com, which no environment available on
+   * 2026-08-20 could produce — the container that could break the network could
+   * not produce a green run, for the same reason. It is written to the same rule
+   * as everything around it and is UNPROVEN, which is not the same as working.
+   * The honest way to exercise it is to point HC_PING_KEY at a deliberately
+   * wrong key on a healthy day and confirm the run goes red.
+   */
+  if (code === 0 && !alertDelivered) process.exit(3);
 
   process.exit(code);
 }

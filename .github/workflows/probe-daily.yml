@@ -48,5 +48,12 @@ jobs:
       # daily run alone could keep the switch looking healthy while the
       # fast probe had silently stopped — which is the precise failure the
       # switch exists to catch.
+      # ⚠ --alert IS here, though --deadman is not. Liveness belongs to one
+      # suite; the diagnosis belongs to whichever suite found it. The daily suite
+      # is the only one that reports warnings at all, so without this the entire
+      # warn tier — `ticket: off`, `register: admin-only`, the two states that
+      # cost 19 days once — would never reach an inbox with its text attached.
       - name: Run the daily probe
-        run: node probe.mjs --suite daily
+        env:
+          HC_PING_KEY: ${{ secrets.HC_PING_KEY }}
+        run: node probe.mjs --suite daily --alert

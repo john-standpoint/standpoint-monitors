@@ -41,5 +41,12 @@ jobs:
         with:
           node-version: "22"
 
+      # ⚠ --alert matters MOST here, and this is the suite that proved it. The
+      # sitemap check is weekly, and a weekly finding is the one most likely to
+      # be missed: it arrives on a Monday morning among everything else, once.
+      # The floor had drifted 25 pages below the real count for four days and the
+      # only reason anyone learned that was a deliberate break.
       - name: Run the weekly probe
-        run: node probe.mjs --suite weekly
+        env:
+          HC_PING_KEY: ${{ secrets.HC_PING_KEY }}
+        run: node probe.mjs --suite weekly --alert

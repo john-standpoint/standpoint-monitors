@@ -163,12 +163,37 @@ box on the run **summary** page — the first page the "View workflow run" butto
 instead of inside the job log, four clicks and one expanded step deeper. **Four clicks to
 one.** That is worth keeping. It is not what was asked for.
 
-⚠ **The open question is therefore still open**, and the next candidate is to stop
-depending on GitHub's template at all: healthchecks.io — already wired, already mailing —
-accepts a **POST body on `/fail`** and puts it in its own alert. That would give us the
-alert text verbatim. ⚠ **It is a hypothesis and is written here as one.** The last remedy
-recorded in this file as a fact had never been tested either, and cost a build to
-discover. **Test it before believing it.**
+### ✅ What did work: a second channel, tested before it was built
+
+healthchecks.io accepts a POST body on `/fail` and prints it in its own alert mail under a
+**Last Ping Body** heading. **Measured 2026-08-20 against a throwaway check, before a line
+of code was written** — ⚠ and the healthchecks docs do *not* promise this: "Attaching Logs"
+says the body is stored and points at the web UI's Events section, saying nothing about
+notifications. The previous remedy was believed on the strength of a plausible sentence and
+cost a build. This one was believed on the strength of an email.
+
+So `--alert` POSTs the full failure text — every failure the suite allows, each with its
+observed value, plus the run URL — to a **per-suite** check:
+
+```
+standpoint-probe-fast    standpoint-probe-daily    standpoint-probe-weekly
+```
+
+⚠ **PER-SUITE, AND NOT FOR TIDINESS.** With one shared check, a weekly sitemap failure
+would alert and then the next *fast* run — up to an hour later — would post success and
+healthchecks would mail **"UP"** while the sitemap was still short 25 pages. **A recovery
+notice for something that has not recovered is the green-while-blind failure, delivered by
+mail.** Per-suite, a weekly failure stays down until a weekly run passes.
+
+⚠ **These three checks are NOT a second liveness monitor.** Their periods are set
+deliberately loose (`SETUP.md` step 7b) because liveness belongs to the dead-man's switch,
+which is calibrated, proven, and pinged by exactly one suite. These exist only to carry
+text.
+
+⚠ **A missing `HC_PING_KEY` under `--alert` is a hard failure, exit 3** — and a *clean* run
+whose alert channel is broken exits 3 as well, because nothing else would ever notice: the
+probe is green, GitHub is quiet, and the one path carrying a diagnosis is dead until the
+day it is needed.
 
 ⚠ **They are emitted unconditionally, not gated on `GITHUB_ACTIONS`.** The tidier version
 has a state in which the annotations are silently off and reports identically to the

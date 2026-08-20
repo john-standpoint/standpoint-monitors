@@ -94,7 +94,13 @@ jobs:
       # No `npm ci`. There are no dependencies, deliberately — see README.
       # A monitor that can be broken by a supply-chain update is a monitor
       # that will be broken on the morning you need it.
+      # ⚠ --alert is on EVERY suite, unlike --deadman. They answer different
+      # questions and the distinction matters: --deadman asks "is the probe still
+      # running at all", which exactly one suite may answer. --alert carries the
+      # DIAGNOSIS of whatever this suite just found, and a suite whose findings
+      # cannot reach an inbox is a suite nobody hears from.
       - name: Run the fast probe
         env:
           DEADMAN_URL: ${{ secrets.DEADMAN_URL }}
-        run: node probe.mjs --suite fast --deadman
+          HC_PING_KEY: ${{ secrets.HC_PING_KEY }}
+        run: node probe.mjs --suite fast --deadman --alert
