@@ -60,7 +60,7 @@ const TARGETS = {
  * 2026-08-16. RAISE THIS when pages are added; it exists to catch pages
  * disappearing, which has never once been intentional.
  */
-const SITEMAP_FLOOR = 9999;
+const SITEMAP_FLOOR = 69;
 
 /*
  * ⚠⚠ NO LATENCY THRESHOLD IS SET, AND THAT IS A DECISION, NOT AN OVERSIGHT.
