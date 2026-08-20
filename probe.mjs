@@ -56,9 +56,20 @@ const TARGETS = {
 };
 
 /*
- * ⚠ A RATCHET, NOT A CONSTANT — see checkSitemap. 44 URLs were served on
- * 2026-08-16. RAISE THIS when pages are added; it exists to catch pages
- * disappearing, which has never once been intentional.
+ * ⚠ A RATCHET, NOT A CONSTANT — see checkSitemap. RAISE THIS when pages are
+ * added; it exists to catch pages disappearing, which has never once been
+ * intentional.
+ *
+ * 44 URLs were served on 2026-08-16. **69 on 2026-08-20** — and the floor had
+ * been left at 44 the whole time, so the site could have lost TWENTY-FIVE pages
+ * with the weekly check still green.
+ *
+ * ⚠ THAT IS THE COST OF A RATCHET NOBODY RATCHETS, AND IT WAS FOUND BY
+ * ACCIDENT: the number surfaced only because the floor was temporarily set to
+ * 9999 to test an unrelated alert. Nothing in this repository notices a floor
+ * drifting further and further below the real count — the check is asymmetric
+ * by design, and its blind side widens every time a page is published.
+ * Raising this is part of publishing pages, not a chore that can wait.
  */
 const SITEMAP_FLOOR = 69;
 

@@ -138,9 +138,37 @@ sat one click away, behind a login, on a phone, at night. An alert that costs a 
 session to interpret is an alert that gets opened later each time.
 
 So since 2026-08-20 `report()` emits every failure a **second** time as a GitHub workflow
-annotation — `::error::` for a page, `::warning::` for a warn — which GitHub *does* put in
-the notification. The console lines are for someone already reading the log; the
-annotations are for someone who is not.
+annotation — `::error::` for a page, `::warning::` for a warn. The console lines are for
+someone already reading the log; the annotations are for someone who is not.
+
+### ⚠⚠ AND THAT STILL DOES NOT PUT IT IN THE MAIL. MEASURED, NOT ASSUMED.
+
+The item this was built from asserted that *"GitHub does surface annotations in the
+mail"*. **That was an assumption written as a finding, and it is false.** Proven the same
+day by running the deliberate failure and photographing the resulting email, which reads
+in its entirety:
+
+```
+Probe · weekly (structure): All jobs have failed
+Status | Job                                          | Annotations
+  ✗    | Probe · weekly (structure) / Structural      |   💬 3
+       | checks — Failed in 8 seconds                 |
+```
+
+**A count. Not the text.** The sentence `Sitemap has LOST pages — 69 URLs, floor is 9999`
+was in annotation 2 of those 3, and the mail did not carry one word of it.
+
+**What the annotations did buy**, and it is not nothing: the diagnosis now sits in a red
+box on the run **summary** page — the first page the "View workflow run" button lands on —
+instead of inside the job log, four clicks and one expanded step deeper. **Four clicks to
+one.** That is worth keeping. It is not what was asked for.
+
+⚠ **The open question is therefore still open**, and the next candidate is to stop
+depending on GitHub's template at all: healthchecks.io — already wired, already mailing —
+accepts a **POST body on `/fail`** and puts it in its own alert. That would give us the
+alert text verbatim. ⚠ **It is a hypothesis and is written here as one.** The last remedy
+recorded in this file as a fact had never been tested either, and cost a build to
+discover. **Test it before believing it.**
 
 ⚠ **They are emitted unconditionally, not gated on `GITHUB_ACTIONS`.** The tidier version
 has a state in which the annotations are silently off and reports identically to the
@@ -154,7 +182,9 @@ a catastrophe and was wrong the one time it happened.
 ⚠ **No test in this repository can prove the mail.** `report.test.mjs` proves the
 annotation is well-formed, one-line, correctly escaped and carries the observed value.
 Whether GitHub surfaces it in the notification is settled only by `SETUP.md` step 7, in a
-real inbox.
+real inbox — and on 2026-08-20 it settled it in the negative. **That is exactly why the
+step exists**, and why "it should appear in the mail" was never a safe thing to write
+down.
 
 ## What is checked
 
