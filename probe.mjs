@@ -71,7 +71,7 @@ const TARGETS = {
  * by design, and its blind side widens every time a page is published.
  * Raising this is part of publishing pages, not a chore that can wait.
  */
-const SITEMAP_FLOOR = 69;
+const SITEMAP_FLOOR = 9999;
 
 /*
  * ⚠⚠ NO LATENCY THRESHOLD IS SET, AND THAT IS A DECISION, NOT AN OVERSIGHT.
