@@ -448,3 +448,122 @@ function strip(payload) {
   const { slots, ...rest } = payload;
   return rest;
 }
+
+/* ------------------------------------------------------------------------ *
+ * 7. chartingyourretirementjourney.com — added 2026-08-24 [claim-3c4e]
+ * ------------------------------------------------------------------------ */
+
+const CYRJ_ORIGIN = "https://chartingyourretirementjourney.com";
+const CYRJ_STAGING_HOST = "new.chartingyourretirementjourney.com";
+
+/*
+ * ⚠ A SEPARATE FUNCTION RATHER THAN A PARAMETERISED checkHomepage, DELIBERATELY.
+ *
+ * `checkHomepage` closes over LIVE_ORIGIN at module scope. Generalising it would
+ * mean editing a check that currently guards a live site, to add a second one —
+ * and the two sites do not actually want the same assertions. standpoint.ch
+ * pages on missing analytics; CYRJ has no analytics decision yet. CYRJ must be
+ * free of two markers standpoint.ch has never heard of. The duplication is
+ * cheaper than the coupling, and the same argument is already made at the top of
+ * this file about duplicating the pre-publish gate.
+ *
+ * WHAT THIS SITE'S OUTAGES ACTUALLY LOOK LIKE, which is what these assert:
+ *
+ *   · A STAGING BUILD PUBLISHED OVER PRODUCTION. It happened on 2026-08-21,
+ *     during cutover: `npm run deploy:staging` was run after the domain had been
+ *     repointed, and the live site served a noindex, Disallow-everything build
+ *     that RENDERED PERFECTLY. `.cutover-done` now refuses that command, but a
+ *     guard in one repo is not a monitor on the live URL.
+ *   · THE WORDPRESS PAST COMING BACK. Until 2026-08-21 this site served its
+ *     logo, both author portraits and half its homepage illustrations from
+ *     `ut6on4bvzlz.preview.infomaniak.website` — a PREVIEW host. WordPress is
+ *     still on disk as the rollback. If the document root is ever pointed back,
+ *     the site returns 200 on every page and looks plausible.
+ */
+export function checkCyrjHome({ status, body }) {
+  const out = [];
+  const id = "cyrj-home";
+
+  if (status !== 200) {
+    return [bad(id, PAGE, `chartingyourretirementjourney.com did not answer 200.`, `HTTP ${status}`)];
+  }
+
+  /*
+   * ⚠ A 200 WITH A TINY BODY IS THE FAILURE THAT LOOKS LIKE HEALTH — the same
+   * reasoning as the standpoint.ch homepage above. Measured on the live page,
+   * which is comfortably over 20 KB; 8 KB catches a stub or a truncated upload
+   * without tripping on ordinary copy edits.
+   */
+  if (body.length < 8_000) {
+    out.push(bad(id, PAGE, `CYRJ homepage body is implausibly small — a stub or a truncated upload.`, `${body.length} bytes`));
+  }
+
+  /* Stated twice where it can be: live marker PRESENT, staging marker ABSENT. */
+  if (!body.includes(`<link rel="canonical" href="${CYRJ_ORIGIN}/`)) {
+    out.push(bad(id, PAGE, `No canonical on ${CYRJ_ORIGIN}/. A staging build is being served.`, excerpt(body, /<link rel="canonical"[^>]*>/)));
+  }
+  if (body.includes(CYRJ_STAGING_HOST)) {
+    out.push(bad(id, PAGE, `The page references ${CYRJ_STAGING_HOST}. A staging build is being served.`, excerpt(body, new RegExp(`[^"']*${CYRJ_STAGING_HOST}[^"']*`))));
+  }
+  if (!/content="index, follow"/.test(body)) {
+    out.push(bad(id, PAGE, `CYRJ homepage is not marked 'index, follow'.`, excerpt(body, /<meta name="robots"[^>]*>/)));
+  }
+  if (/noindex/.test(body)) {
+    out.push(bad(id, PAGE, `CYRJ homepage carries a noindex directive. This is a staging build.`, excerpt(body, /<meta name="robots"[^>]*>/)));
+  }
+
+  /*
+   * ⚠ THE TWO MARKERS UNIQUE TO THIS SITE. Their presence means either the
+   * WordPress rollback is being served, or an asset reverted to the preview
+   * host. Both return 200 on every page and look entirely normal.
+   */
+  if (body.includes("wp-content")) {
+    out.push(bad(id, PAGE, `CYRJ homepage references wp-content — WordPress is being served, or an asset was not migrated.`, excerpt(body, /[^"']*wp-content[^"']*/)));
+  }
+  if (body.includes("preview.infomaniak.website")) {
+    out.push(bad(id, PAGE, `CYRJ homepage references the Infomaniak PREVIEW host. That dependency is what the rebuild removed.`, excerpt(body, /[^"']*preview\.infomaniak\.website[^"']*/)));
+  }
+
+  return out.length ? out : [ok(id, PAGE, "CYRJ homepage is the live build: canonical, indexable, no wp-content, no preview host.")];
+}
+
+/*
+ * ⚠ THE ASSERTION IS THE MAGIC BYTES, NOT THE CONTENT-TYPE HEADER.
+ *
+ * The probe hands checks `{ status, body }` as TEXT and no headers, so a
+ * content-type assertion is not available here — and that is no loss, because
+ * `%PDF` is the stronger claim anyway. A host serving an HTML 404 under a
+ * `.pdf` name can still send `content-type: application/pdf`; it cannot fake
+ * the first four bytes of the file.
+ *
+ * WHY A WORKSHEET AND NOT SOME OTHER URL. The seventeen worksheet PDFs are what
+ * the printed book's QR codes send readers to. Those codes cannot be reissued.
+ * A worksheet that 404s is the one failure on this site with no recovery path
+ * and no other witness — nobody browses to `/downloads/` to check.
+ */
+export function checkCyrjWorksheet({ status, body }) {
+  const id = "cyrj-worksheet";
+
+  if (status !== 200) {
+    return [bad(id, PAGE, `A worksheet PDF did not answer 200. The printed QR codes lead here.`, `HTTP ${status}`)];
+  }
+  if (!body.startsWith("%PDF")) {
+    return [
+      bad(
+        id,
+        PAGE,
+        `A worksheet URL answered 200 but the body is not a PDF — an error page under a .pdf name.`,
+        `first bytes: ${JSON.stringify(body.slice(0, 40))}`,
+      ),
+    ];
+  }
+  /*
+   * The real file is ~99 KB. A truncated upload still begins with %PDF, so the
+   * magic bytes alone would pass it.
+   */
+  if (body.length < 5_000) {
+    return [bad(id, PAGE, `A worksheet PDF is implausibly small — a truncated upload.`, `${body.length} bytes`)];
+  }
+
+  return [ok(id, PAGE, "A worksheet PDF is served, and it is genuinely a PDF.")];
+}

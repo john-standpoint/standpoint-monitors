@@ -35,6 +35,8 @@ import {
   PAGE,
   WARN,
   checkAvailability,
+  checkCyrjHome,
+  checkCyrjWorksheet,
   checkHiddenPage,
   checkHomepage,
   checkRobots,
@@ -53,6 +55,17 @@ const TARGETS = {
   scanHealth: "https://scan.standpoint.ch/api/health",
   sitemap: "https://standpoint.ch/sitemap.xml",
   hidden: "https://standpoint.ch/setup-a-session/",
+
+  /*
+   * chartingyourretirementjourney.com — added 2026-08-24 [claim-3c4e], three
+   * days after it went live on Astro.
+   *
+   * ⚠ THE WORKSHEET URL IS LOAD-BEARING AND MUST NOT BE "TIDIED" TO A NICER
+   * PATH. The seventeen worksheet PDFs are where the printed book's QR codes
+   * send readers, and those codes cannot be reissued. This is one of them.
+   */
+  cyrjHome: "https://chartingyourretirementjourney.com/",
+  cyrjWorksheet: "https://chartingyourretirementjourney.com/downloads/4.2-Base-Camp-Check-In.pdf",
 };
 
 /*
@@ -120,11 +133,23 @@ const RETRY_DELAY_MS = 4_000;
  * day until it is fixed is loud enough to act on and quiet enough not to mute.
  */
 const SUITES = {
-  fast: { severities: [PAGE], checks: ["home", "availability", "scanHealth"] },
-  daily: { severities: [PAGE, WARN], checks: ["home", "robots", "availability", "scanHealth"] },
+  /*
+   * ⚠ cyrjHome is in FAST; cyrjWorksheet is not. The homepage catches the
+   * outage class this site has actually had — a staging build or the WordPress
+   * rollback served over production, both of which render perfectly — and that
+   * wants hourly eyes. The worksheet fetch pulls ~99 KB and its failure mode is
+   * slow-moving, so daily is enough; putting it in fast would multiply the
+   * bandwidth by twenty-four to shorten a detection window that nothing else
+   * depends on.
+   */
+  fast: { severities: [PAGE], checks: ["home", "availability", "scanHealth", "cyrjHome"] },
+  daily: {
+    severities: [PAGE, WARN],
+    checks: ["home", "robots", "availability", "scanHealth", "cyrjHome", "cyrjWorksheet"],
+  },
   weekly: {
     severities: [PAGE, WARN],
-    checks: ["home", "robots", "availability", "scanHealth", "sitemap", "hidden"],
+    checks: ["home", "robots", "availability", "scanHealth", "sitemap", "hidden", "cyrjHome", "cyrjWorksheet"],
   },
 };
 
@@ -206,6 +231,8 @@ async function run(suiteName) {
   if (wanted.has("robots")) results.push(...checkRobots(await get("robots")));
   if (wanted.has("availability")) results.push(...checkAvailability(await get("availability")));
   if (wanted.has("scanHealth")) results.push(...checkScanHealth(await get("scanHealth")));
+  if (wanted.has("cyrjHome")) results.push(...checkCyrjHome(await get("cyrjHome")));
+  if (wanted.has("cyrjWorksheet")) results.push(...checkCyrjWorksheet(await get("cyrjWorksheet")));
 
   /*
    * The sitemap is fetched once and its URL list is handed to the hidden-page

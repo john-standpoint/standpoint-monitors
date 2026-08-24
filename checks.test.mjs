@@ -41,6 +41,8 @@ import {
   PAGE,
   WARN,
   checkAvailability,
+  checkCyrjHome,
+  checkCyrjWorksheet,
   checkHiddenPage,
   checkHomepage,
   checkRobots,
@@ -417,4 +419,95 @@ test("hidden page: one that has appeared in the sitemap warns", () => {
   );
   assert.equal(failedWith(results, WARN).length, 1);
   assert.match(results[0].note, /no longer unlisted/i);
+});
+
+/* ------------------------------------------------------------------------ *
+ * chartingyourretirementjourney.com — added 2026-08-24 [claim-3c4e]
+ *
+ * ⚠ The GOOD fixture is shaped from the bytes that site served on 2026-08-21,
+ * the day it went live: canonical on the bare domain, index/follow, and — the
+ * two that matter here — NO `wp-content` and NO preview host anywhere.
+ * ------------------------------------------------------------------------ */
+
+const GOOD_CYRJ_HOME =
+  `<!DOCTYPE html><html lang="en"><head>` +
+  `<link rel="canonical" href="https://chartingyourretirementjourney.com/">` +
+  `<meta name="robots" content="index, follow">` +
+  `</head><body>` +
+  "x".repeat(20_000) +
+  `</body></html>`;
+
+/* A real PDF opens with these four bytes. Everything after is padding. */
+const GOOD_WORKSHEET = "%PDF-1.4\n" + "%".repeat(20_000);
+
+test("cyrj home: the live build passes", () => {
+  const results = checkCyrjHome({ status: 200, body: GOOD_CYRJ_HOME });
+  assert.equal(failures(results).length, 0, "the bytes served on launch day must not trip the check");
+});
+
+test("cyrj home: a NON-200 pages immediately", () => {
+  const results = checkCyrjHome({ status: 503, body: "" });
+  assert.equal(failedWith(results, PAGE).length, 1);
+});
+
+test("cyrj home: a 200 with a stub body is caught — the failure that looks like health", () => {
+  const results = checkCyrjHome({ status: 200, body: GOOD_CYRJ_HOME.slice(0, 400) });
+  assert.ok(failures(results).some((r) => /implausibly small/i.test(r.note)));
+});
+
+/*
+ * ⚠ THE ONE THAT ACTUALLY HAPPENED. On 2026-08-21 `npm run deploy:staging` was
+ * run after the domain had been repointed, and the live site served a noindex
+ * build that rendered perfectly. Three written warnings had not prevented it.
+ */
+test("cyrj home: A STAGING BUILD PUBLISHED OVER PRODUCTION fails on every marker", () => {
+  const staging =
+    `<!DOCTYPE html><html lang="en"><head>` +
+    `<link rel="canonical" href="https://new.chartingyourretirementjourney.com/">` +
+    `<meta name="robots" content="noindex, nofollow">` +
+    `</head><body>` +
+    "x".repeat(20_000) +
+    `</body></html>`;
+  const results = checkCyrjHome({ status: 200, body: staging });
+  const notes = failures(results).map((r) => r.note).join(" | ");
+  assert.match(notes, /canonical/i);
+  assert.match(notes, /new\.chartingyourretirementjourney\.com/);
+  assert.match(notes, /index, follow/i);
+  assert.match(notes, /noindex/i);
+  assert.ok(failedWith(results, PAGE).length >= 4, "a staging build must trip more than one marker");
+});
+
+/* The WordPress rollback, or an asset reverted to the preview host. Both
+   answer 200 on every page and look entirely normal to a human. */
+test("cyrj home: wp-content coming back is caught", () => {
+  const results = checkCyrjHome({ status: 200, body: GOOD_CYRJ_HOME.replace("<body>", `<body><img src="/wp-content/uploads/x.png">`) });
+  assert.ok(failures(results).some((r) => /wp-content/i.test(r.note)));
+});
+
+test("cyrj home: the Infomaniak PREVIEW host coming back is caught", () => {
+  const results = checkCyrjHome({ status: 200, body: GOOD_CYRJ_HOME.replace("<body>", `<body><img src="https://ut6on4bvzlz.preview.infomaniak.website/x.png">`) });
+  assert.ok(failures(results).some((r) => /preview host/i.test(r.note)));
+});
+
+test("cyrj worksheet: a real PDF passes", () => {
+  const results = checkCyrjWorksheet({ status: 200, body: GOOD_WORKSHEET });
+  assert.equal(failures(results).length, 0);
+});
+
+test("cyrj worksheet: a 404 page under a .pdf name is caught — 200, and not a PDF", () => {
+  const results = checkCyrjWorksheet({ status: 200, body: "<!DOCTYPE html><title>404 Not Found</title>" });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.match(results[0].note, /not a PDF/i);
+});
+
+test("cyrj worksheet: a TRUNCATED upload still opens with %PDF and is still caught", () => {
+  const results = checkCyrjWorksheet({ status: 200, body: "%PDF-1.4\n" });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.match(results[0].note, /implausibly small/i);
+});
+
+test("cyrj worksheet: a non-200 pages — the printed QR codes lead here", () => {
+  const results = checkCyrjWorksheet({ status: 404, body: "" });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.match(results[0].note, /QR codes/i);
 });
