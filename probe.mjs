@@ -37,6 +37,9 @@ import {
   checkAvailability,
   checkCyrjHome,
   checkCyrjWorksheet,
+  checkNotFoundEn,
+  checkNotFoundFr,
+  checkRedirects,
   checkHiddenPage,
   checkHomepage,
   checkRobots,
@@ -47,6 +50,16 @@ import {
 /* ------------------------------------------------------------------------ *
  * Configuration — everything that could reasonably change, in one place.
  * ------------------------------------------------------------------------ */
+
+/*
+ * ⚠ DERIVED FROM TARGETS.home, NOT RETYPED. checks.mjs holds its own origin
+ * constant and does not export it; a second literal here would be a third copy
+ * and the one nobody updates. It is also what caught this: the redirect loop
+ * was first written against a bare origin identifier that does not exist in
+ * this module, and `node --check` passed it, because a ReferenceError is a
+ * runtime event. Only running the probe found it.
+ */
+const liveOrigin = () => new URL(TARGETS.home).origin;
 
 const TARGETS = {
   home: "https://standpoint.ch/",
@@ -66,7 +79,71 @@ const TARGETS = {
    */
   cyrjHome: "https://chartingyourretirementjourney.com/",
   cyrjWorksheet: "https://chartingyourretirementjourney.com/downloads/4.2-Base-Camp-Check-In.pdf",
+
+  /*
+   * ⚠ THESE TWO PATHS MUST NEVER EXIST, AND THE NAME SAYS SO ON PURPOSE.
+   * They probe the 404 HANDLERS, so the check is meaningless the moment a real
+   * page answers. If anyone ever adds a page here the checks go red on the
+   * status assertion rather than passing quietly, which is the wanted failure.
+   */
+  notFoundEn: "https://standpoint.ch/_monitor-404-probe/",
+  notFoundFr: "https://standpoint.ch/fr/_monitor-404-probe/",
 };
+
+/*
+ * The hand-pasted redirect rules. Added 2026-08-24 [claim-3b8e].
+ *
+ * ⚠⚠ THIS LIST IS DUPLICATED FROM standpoint-website/scripts/check-redirects.sh
+ * AND NOTHING CAN KEEP THEM IN STEP. They are in different repositories, so no
+ * import is possible, and the authoritative copy is neither of them — it is the
+ * live .htaccess, pasted by hand through the Infomaniak manager, with
+ * docs/launch/htaccess-redirects.txt as the script for rebuilding it.
+ * That makes FOUR places. ⚠ When a rule is added there, add it here; the count
+ * in this check's ok line is what will show the drift, and only to somebody
+ * reading it.
+ *
+ * ⚠ /independant-consultants/ IS NOT A TYPO — it is the misspelling the answer
+ * engines actually cite. The correctly-spelled rule above it reported ok since
+ * launch while catching nothing, because it was written from what the slug
+ * should have been rather than from what was published. Both stay.
+ *
+ * ⚠ /storybuilding-book carries NO trailing slash because that is the form
+ * printed on the book's copyright page, and a checker should test the string a
+ * reader will type. The .htaccess rule is anchored `/?$` so both forms work.
+ */
+const REDIRECT_RULES = [
+  { from: "/companies/", want: "/charter/" },
+  { from: "/independent-consultants/", want: "/charter/" },
+  { from: "/a-little-about-me/", want: "/about-me/" },
+  { from: "/how-we-can-work-together/", want: "/working-together/" },
+  { from: "/tagline-builder/", want: "/scan/" },
+  { from: "/sprint/", want: "/charter/" },
+  { from: "/story-governance/", want: "/governance/" },
+
+  /* Citation recovery, 2026-08-16 [claim-b3f8] — every one a URL an engine cites. */
+  { from: "/my-persona/", want: "/about-me/" },
+  { from: "/un-peu-sur-moi/", want: "/about-me/" },
+  { from: "/podcast-interviews/", want: "/interviews/" },
+  { from: "/standpoint-storytelling/", want: "/storybuilding/" },
+  { from: "/independant-consultants/", want: "/charter/" },
+  { from: "/cases-studies/", want: "/case-studies/" },
+
+  /* The address printed in the book, 2026-08-19 [claim-7e21]. Not fixable at source. */
+  { from: "/storybuilding-book", want: "/the-book/" },
+
+  /*
+   * ⚠ Block 3b — the case-study PDFs. CHECKING THEM IS NOT ENDORSING THEM.
+   * John ruled on 13 August that no redirects would be written for these; they
+   * were found live on the server on 19 August anyway. His instruction: do not
+   * add new ones, but assert the ones that are there, because a live rule
+   * nothing asserts can break silently and nobody learns. If he later decides
+   * they should go, delete the rules AND these four lines together.
+   */
+  { from: "/wp-content/uploads/2025/09/Storybuilding-Case-Study-CertCare.pdf", want: "/case-studies/certcare/" },
+  { from: "/wp-content/uploads/2025/09/Storybuilding-Case-Study-GoEko.pdf", want: "/case-studies/goeko/" },
+  { from: "/wp-content/uploads/2025/09/Storybuilding-Case-Study-fAIcon.pdf", want: "/case-studies/faicon/" },
+  { from: "/wp-content/uploads/2025/09/Storybuilding-Case-Study-Finbed.pdf", want: "/case-studies/finbed/" },
+];
 
 /*
  * ⚠ A RATCHET, NOT A CONSTANT — see checkSitemap. RAISE THIS when pages are
@@ -142,14 +219,24 @@ const SUITES = {
    * bandwidth by twenty-four to shorten a detection window that nothing else
    * depends on.
    */
+  /*
+   * ⚠ notFoundEn is PAGE severity but is NOT in `fast`, and that is a cadence
+   * decision rather than a severity one. Its failure mode is a hand edit to a
+   * server file — an event with a person attached, not a drift that happens at
+   * 3am — so a detection window of a day is the right size, and putting it in
+   * fast would add 24 requests a day to shorten a window nothing depends on.
+   */
   fast: { severities: [PAGE], checks: ["home", "availability", "scanHealth", "cyrjHome"] },
   daily: {
     severities: [PAGE, WARN],
-    checks: ["home", "robots", "availability", "scanHealth", "cyrjHome", "cyrjWorksheet"],
+    checks: ["home", "robots", "availability", "scanHealth", "cyrjHome", "cyrjWorksheet", "notFoundEn", "notFoundFr", "redirects"],
   },
   weekly: {
     severities: [PAGE, WARN],
-    checks: ["home", "robots", "availability", "scanHealth", "sitemap", "hidden", "cyrjHome", "cyrjWorksheet"],
+    checks: [
+      "home", "robots", "availability", "scanHealth", "sitemap", "hidden",
+      "cyrjHome", "cyrjWorksheet", "notFoundEn", "notFoundFr", "redirects",
+    ],
   },
 };
 
@@ -157,10 +244,18 @@ const SUITES = {
  * Fetching
  * ------------------------------------------------------------------------ */
 
-async function fetchOnce(url) {
+/*
+ * ⚠ `follow` IS AN ARGUMENT BECAUSE A REDIRECT CHECK CANNOT USE THE DEFAULT.
+ * With redirect:"follow" the 301 is invisible — fetch reports the FINAL 200 and
+ * the intermediate hop is gone, so "301 to the right place" and "meta-refresh
+ * HTML that happens to end up there" are the same observation. astro.config.mjs
+ * emits exactly those meta-refresh pages for these same slugs, and they pass no
+ * signal to a search engine, so telling them apart is the entire job.
+ */
+async function fetchOnce(url, { follow = true } = {}) {
   const started = Date.now();
   const response = await fetch(url, {
-    redirect: "follow",
+    redirect: follow ? "follow" : "manual",
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     headers: {
       /*
@@ -174,14 +269,19 @@ async function fetchOnce(url) {
     },
   });
   const body = await response.text();
-  return { status: response.status, body, ms: Date.now() - started };
+  return {
+    status: response.status,
+    body,
+    location: response.headers.get("location"),
+    ms: Date.now() - started,
+  };
 }
 
-async function fetchWithRetry(url) {
+async function fetchWithRetry(url, options) {
   let lastError;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
     try {
-      const result = await fetchOnce(url);
+      const result = await fetchOnce(url, options);
       return { ...result, attempts: attempt };
     } catch (error) {
       lastError = error;
@@ -233,6 +333,44 @@ async function run(suiteName) {
   if (wanted.has("scanHealth")) results.push(...checkScanHealth(await get("scanHealth")));
   if (wanted.has("cyrjHome")) results.push(...checkCyrjHome(await get("cyrjHome")));
   if (wanted.has("cyrjWorksheet")) results.push(...checkCyrjWorksheet(await get("cyrjWorksheet")));
+
+  if (wanted.has("notFoundEn")) {
+    results.push(...checkNotFoundEn(await get("notFoundEn"), { url: TARGETS.notFoundEn }));
+  }
+  if (wanted.has("notFoundFr")) {
+    results.push(...checkNotFoundFr(await get("notFoundFr"), { url: TARGETS.notFoundFr }));
+  }
+
+  /*
+   * ⚠ TWO REQUESTS PER RULE, AND BOTH ARE LOAD-BEARING. The unfollowed one
+   * proves it is a real 301 to the right target; the followed one proves that
+   * target is not itself dead. A 301 to a 404 is worse than no redirect at all
+   * — it tells four answer engines that a specific page is the successor to the
+   * old one — and it is invisible to either half alone.
+   */
+  if (wanted.has("redirects")) {
+    const observations = [];
+    for (const rule of REDIRECT_RULES) {
+      const url = `${liveOrigin()}${rule.from}`;
+      const first = await fetchWithRetry(url, { follow: false });
+      timings.push({ key: `redirect ${rule.from}`, ms: first.ms, attempts: first.attempts, status: first.status });
+      if (first.transportError) {
+        observations.push({ ...rule, transportError: first.transportError });
+        continue;
+      }
+      /*
+       * Only follow when the first hop already looks right. Following a 404
+       * costs a request and tells us nothing we do not already know.
+       */
+      let finalStatus = null;
+      if (first.status === 301) {
+        const followed = await fetchWithRetry(url);
+        finalStatus = followed.transportError ? 0 : followed.status;
+      }
+      observations.push({ ...rule, status: first.status, location: first.location, finalStatus });
+    }
+    results.push(...checkRedirects(observations));
+  }
 
   /*
    * The sitemap is fetched once and its URL list is handed to the hidden-page

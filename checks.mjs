@@ -589,3 +589,235 @@ export function checkCyrjWorksheet({ status, body }) {
 
   return [ok(id, PAGE, "A worksheet PDF is served, and it is genuinely a PDF.")];
 }
+
+/* ------------------------------------------------------------------------ *
+ * SERVER-SIDE CONFIG — the hand-pasted .htaccess. Added 2026-08-24 [claim-3b8e]
+ * ------------------------------------------------------------------------ *
+ *
+ * ⚠⚠ EVERYTHING BELOW WATCHES RULES THAT EXIST ONLY ON A SERVER, AND UNTIL
+ * TODAY NOTHING WATCHED THEM AT ALL. A grep for `Redirect` or `301` across this
+ * file and probe.mjs returned zero.
+ *
+ * WHY THIS CLASS IS INVISIBLE TO EVERY OTHER INSTRUMENT WE HAVE.
+ * standpoint-website's scripts/assert-live-build.mjs reads `dist/`. These rules
+ * are not in `dist/` and CANNOT BE: scripts/deploy-staging.mjs lists ".htaccess"
+ * in `protectedNames`, so it refuses to upload one, deliberately — the root
+ * .htaccess is host-managed and once carried the staging password protection.
+ * So the rules are pasted by hand into the Infomaniak manager and live nowhere
+ * else that any automated thing can read. Only a network probe can see them.
+ *
+ * ⚠ WHAT THAT COST, MEASURED. `ErrorDocument 404 /404.html` sat on OPEN_ITEMS.md
+ * as an open P1 — "without this the 404 page is never served" — from before the
+ * 12 August launch until 24 August, while it worked perfectly the whole time.
+ * Nobody was careless. There was no instrument that could have told anyone.
+ *
+ * ⚠ THIS DUPLICATES standpoint-website's scripts/check-redirects.sh, AND THAT
+ * IS DELIBERATE, for the same reason the header of this file gives for not
+ * deduplicating against assert-live-build.mjs. That script is a launch tool: a
+ * human runs it at a domain switch. This asks the same question every day
+ * without being remembered. ⚠ The two lists WILL drift, because they are in
+ * different repositories and nothing can import across them — see the ⚠ on
+ * REDIRECT_RULES in probe.mjs for the reconciliation that has to stay manual.
+ */
+
+/*
+ * ⚠⚠ A 404 HANDLER CANNOT BE CHECKED BY ITS STATUS CODE. THIS IS THE WHOLE
+ * POINT OF THESE TWO RULES.
+ *
+ * Working and broken both answer `404`. When the handler is missing, Apache
+ * serves its own grey default page — still 404. When /fr/'s handler is missing,
+ * the ROOT handler cascades down and serves the ENGLISH page under a French
+ * URL — still 404, still renders perfectly, still not blank. Every check anyone
+ * would naturally reach for (status code, body non-empty, no server error)
+ * PASSES in both broken states.
+ *
+ * Measured on 2026-08-24, before the fix, on /fr/no-such-page-xyz/:
+ *   grep -c "vous cherchiez" -> 0        grep -c "came here for" -> 2
+ * After John created <site>/fr/.htaccess:
+ *   grep -c "vous cherchiez" -> 2        grep -c "came here for" -> 0
+ *
+ * So the assertion is on the BODY, and the French one asserts the ABSENCE of
+ * the English marker as well as the presence of the French one. The absence is
+ * the half that catches the real regression; presence alone would too, but a
+ * failure that says "the English page is being served here" costs nobody a
+ * debugging session, and one that says "marker missing" costs everybody one.
+ */
+const EN_NOT_FOUND_MARKER = "came here for";
+const FR_NOT_FOUND_MARKER = "vous cherchiez";
+
+function notFoundBase(id, severity, { status, body }, url) {
+  if (status === 0) {
+    return [bad(id, severity, `${url} could not be reached at all.`, "transport failure — status 0, empty body")];
+  }
+  /*
+   * ⚠ NOT `!== 404`. A 200 here is a SOFT 404 — the page rendering as an
+   * ordinary success, which is the shape that gets a 404 page indexed — and a
+   * 403 is Apache refusing a directory, which is what the /setup-a-session/
+   * deploy looked like mid-flight on 14 August. Three different problems, and
+   * the message names which one was seen.
+   */
+  if (status !== 404) {
+    return [
+      bad(
+        id,
+        severity,
+        status === 200
+          ? `${url} answered 200 — a missing page is being served as a SUCCESS. Search engines will index it.`
+          : `${url} answered ${status}, not 404.`,
+        `HTTP ${status}, expected 404`,
+      ),
+    ];
+  }
+  return null;
+}
+
+/*
+ * English. PAGE severity: when this breaks, a visitor who mistypes a URL gets
+ * Apache's unstyled grey error page with the server version on it. That is the
+ * public product being broken, which is what `page` means here.
+ */
+export function checkNotFoundEn(response, { url }) {
+  const id = "notFoundEn";
+  const early = notFoundBase(id, PAGE, response, url);
+  if (early) return early;
+
+  const { body } = response;
+  if (!body.includes(EN_NOT_FOUND_MARKER)) {
+    return [
+      bad(
+        id,
+        PAGE,
+        "The English 404 handler is gone — a missing page shows Apache's default error page, not ours.",
+        `body has no ${JSON.stringify(EN_NOT_FOUND_MARKER)}; add "ErrorDocument 404 /404.html" to the root .htaccess`,
+      ),
+    ];
+  }
+  return [ok(id, PAGE, `custom English 404 served, status 404 (asserted on the body, not the status)`)];
+}
+
+/*
+ * French. WARN, not PAGE, and the distinction is the one this file's severity
+ * doctrine is built on: when this breaks nobody is turned away. A visitor gets
+ * a real, styled, working 404 page — in the wrong language. That is worth one
+ * red daily run, not ninety-six.
+ */
+export function checkNotFoundFr(response, { url }) {
+  const id = "notFoundFr";
+  const early = notFoundBase(id, WARN, response, url);
+  if (early) return early;
+
+  const { body } = response;
+  const out = [];
+
+  if (body.includes(EN_NOT_FOUND_MARKER)) {
+    /*
+     * ⚠ THIS IS THE REGRESSION THAT ACTUALLY HAPPENED, from the French site
+     * shipping on 19 August until 24 August. Named explicitly so the alert
+     * carries its own diagnosis.
+     */
+    out.push(
+      bad(
+        id,
+        WARN,
+        "French visitors are being served the ENGLISH 404 page. The /fr/ handler is missing and the root one is cascading down.",
+        'create <site>/fr/.htaccess containing: ErrorDocument 404 /fr/404/index.html',
+      ),
+    );
+  } else if (!body.includes(FR_NOT_FOUND_MARKER)) {
+    out.push(
+      bad(
+        id,
+        WARN,
+        "The French 404 handler is gone and the English one is not covering for it either.",
+        `body has no ${JSON.stringify(FR_NOT_FOUND_MARKER)} and no ${JSON.stringify(EN_NOT_FOUND_MARKER)}`,
+      ),
+    );
+  }
+
+  /*
+   * ⚠ The lang attribute is checked because it has ALREADY been wrong on this
+   * exact page: the French 404 shipped as <html lang="en"> on 19 August,
+   * because `locale="fr"` was never passed to BaseLayout on the one page
+   * written by hand. A build gate caught it that time; nothing would catch it
+   * being reintroduced at the server layer, and our own Scan reads this
+   * attribute as its locale tiebreaker.
+   */
+  if (out.length === 0 && !body.includes('lang="fr')) {
+    out.push(
+      bad(id, WARN, "The French 404 page is served but declares a non-French lang attribute.", 'expected lang="fr…" in the <html> tag'),
+    );
+  }
+
+  return out.length ? out : [ok(id, WARN, "custom French 404 served, and the English page is NOT leaking into /fr/")];
+}
+
+/*
+ * REDIRECTS.
+ *
+ * Takes already-fetched observations so this stays a pure function like every
+ * other rule here. Each observation is
+ *   { from, want, status, location, finalStatus, transportError }
+ * where `status`/`location` come from an UNFOLLOWED request and `finalStatus`
+ * from a followed one. Both halves are needed and neither is sufficient:
+ * a 301 to a URL that itself 404s is a broken redirect that looks fine to any
+ * checker that only reads the first response, and a followed-only check cannot
+ * tell a 301 from a meta-refresh page — which matters here, because
+ * astro.config.mjs emits meta-refresh pages for these same slugs and those pass
+ * no signal to a search engine.
+ */
+export function checkRedirects(observations) {
+  const id = "redirects";
+  const out = [];
+
+  /*
+   * ⚠ VERIFYING NOTHING IS NOT A PASS. An empty table means someone emptied
+   * REDIRECT_RULES or the wiring broke, and the honest report of that is RED,
+   * not a green tick over zero rules. This exact shape shipped a "✓ Shipped.
+   * 0 page(s)" in ship.mjs's first draft.
+   */
+  if (observations.length === 0) {
+    return [bad(id, WARN, "No redirect rules were checked at all.", "REDIRECT_RULES is empty — the check is blind, not clean")];
+  }
+
+  for (const o of observations) {
+    if (o.transportError) {
+      out.push(bad(id, WARN, `${o.from} could not be reached.`, `transport failure — ${o.transportError}`));
+      continue;
+    }
+    if (o.status !== 301) {
+      out.push(
+        bad(
+          id,
+          WARN,
+          `${o.from} no longer 301s.`,
+          `HTTP ${o.status}${o.status === 404 ? " — the rule is gone from .htaccess" : ""}, expected 301 -> ${o.want}`,
+        ),
+      );
+      continue;
+    }
+    if (!String(o.location || "").endsWith(o.want)) {
+      out.push(bad(id, WARN, `${o.from} 301s to the wrong place.`, `Location ${o.location || "(absent)"}, expected to end with ${o.want}`));
+      continue;
+    }
+    /*
+     * ⚠ A 301 TO A DEAD PAGE IS THE FAILURE THIS HALF EXISTS FOR. It is worse
+     * than no redirect: a 404 loses one citation, whereas a 301 tells four
+     * answer engines that a specific page is the successor to the old one.
+     */
+    if (o.finalStatus !== 200) {
+      out.push(bad(id, WARN, `${o.from} 301s to ${o.want}, which is DEAD.`, `following the redirect gives HTTP ${o.finalStatus}, expected 200`));
+    }
+  }
+
+  /*
+   * ⚠ THE COVERAGE LINE IS NOT DECORATION. A gate reports what it RAN, not
+   * only what it found — `L19-xref` in the audit toolkit read green for weeks
+   * having never executed. If this number ever drops, the check narrowed and
+   * nobody would otherwise see it.
+   */
+  if (out.length === 0) {
+    return [ok(id, WARN, `${observations.length} of ${observations.length} redirect rules ok (301, right target, target answers 200)`)];
+  }
+  out.push(ok(id, WARN, `${observations.length - out.length} of ${observations.length} redirect rules ok`));
+  return out;
+}

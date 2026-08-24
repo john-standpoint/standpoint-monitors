@@ -43,6 +43,9 @@ import {
   checkAvailability,
   checkCyrjHome,
   checkCyrjWorksheet,
+  checkNotFoundEn,
+  checkNotFoundFr,
+  checkRedirects,
   checkHiddenPage,
   checkHomepage,
   checkRobots,
@@ -525,4 +528,144 @@ test("cyrj home: analytics silently missing is caught — the gap cannot be back
   const results = checkCyrjHome({ status: 200, body: noAnalytics });
   assert.equal(failedWith(results, PAGE).length, 1);
   assert.match(results[0].note, /Plausible/i);
+});
+
+/* ------------------------------------------------------------------------ *
+ * SERVER-SIDE CONFIG — 404 handlers and redirects. 2026-08-24 [claim-3b8e]
+ * ------------------------------------------------------------------------ *
+ *
+ * ⚠ THE FIXTURES BELOW ARE THE REAL MEASURED STATES, not invented ones. The
+ * "English page under a French URL" body is what standpoint.ch actually served
+ * on /fr/<anything> from 19 to 24 August 2026, confirmed by curl in both
+ * directions before and after the fix. A red test written from a real outage
+ * is worth more than one written from imagination, because imagination does not
+ * produce the failure that a correct-looking status code hides.
+ */
+
+/* The two markers, as they appear twice each (title and h1) in the real pages. */
+const EN_404_BODY =
+  '<!DOCTYPE html><html lang="en"><head><title>This isn’t what you came here for — Standpoint</title></head>' +
+  "<body><h1>This isn’t what you came here for.</h1></body></html>";
+const FR_404_BODY =
+  '<!DOCTYPE html><html lang="fr-CH"><head><title>Ce n’est pas ce que vous cherchiez — Standpoint</title></head>' +
+  "<body><h1>Ce n’est pas ce que vous cherchiez.</h1></body></html>";
+/* Apache's own page, which is what "the handler is gone" actually looks like. */
+const APACHE_DEFAULT =
+  "<!DOCTYPE HTML PUBLIC><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1>" +
+  "<p>The requested URL was not found on this server.</p><hr><address>Apache Server at standpoint.ch Port 443</address></body></html>";
+
+const EN_URL = "https://standpoint.ch/_monitor-404-probe/";
+const FR_URL = "https://standpoint.ch/fr/_monitor-404-probe/";
+
+test("404 EN: the real served bytes pass", () => {
+  const [r] = checkNotFoundEn({ status: 404, body: EN_404_BODY }, { url: EN_URL });
+  assert.equal(r.ok, true);
+});
+
+test("404 EN: THE HANDLER GONE — Apache's own error page FAILS, and 404 alone would have passed it", () => {
+  const [r] = checkNotFoundEn({ status: 404, body: APACHE_DEFAULT }, { url: EN_URL });
+  assert.equal(r.ok, false);
+  assert.equal(r.severity, PAGE);
+  assert.match(r.observed, /ErrorDocument 404 \/404\.html/);
+});
+
+test("404 EN: a SOFT 404 — status 200 — fails and says it will be indexed", () => {
+  const [r] = checkNotFoundEn({ status: 200, body: EN_404_BODY }, { url: EN_URL });
+  assert.equal(r.ok, false);
+  assert.match(r.note, /SUCCESS/);
+});
+
+test("404 EN: a transport failure is NAMED, not reported as a missing marker", () => {
+  const [r] = checkNotFoundEn({ status: 0, body: "" }, { url: EN_URL });
+  assert.equal(r.ok, false);
+  assert.match(r.observed, /transport failure/);
+});
+
+test("404 FR: the real served bytes pass", () => {
+  const [r] = checkNotFoundFr({ status: 404, body: FR_404_BODY }, { url: FR_URL });
+  assert.equal(r.ok, true);
+});
+
+test("⚠ 404 FR: THE 19-24 AUGUST REGRESSION — the ENGLISH page served under /fr/ is caught and named", () => {
+  /*
+   * ⚠ THIS IS THE TEST THE WHOLE FAMILY EXISTS FOR. Status 404, body non-empty,
+   * page renders perfectly, no server error. Every check anyone would reach for
+   * passes. Only the body assertion sees it.
+   */
+  const [r] = checkNotFoundFr({ status: 404, body: EN_404_BODY }, { url: FR_URL });
+  assert.equal(r.ok, false);
+  assert.equal(r.severity, WARN);
+  assert.match(r.note, /ENGLISH 404 page/);
+  assert.match(r.observed, /fr\/404\/index\.html/);
+});
+
+test("404 FR: neither marker present fails differently from the English-leak case", () => {
+  const [r] = checkNotFoundFr({ status: 404, body: APACHE_DEFAULT }, { url: FR_URL });
+  assert.equal(r.ok, false);
+  assert.match(r.note, /not covering for it either/);
+});
+
+test("404 FR: the French page with lang=\"en\" fails — the defect this page ALREADY shipped once", () => {
+  const body = FR_404_BODY.replace('lang="fr-CH"', 'lang="en"');
+  const [r] = checkNotFoundFr({ status: 404, body }, { url: FR_URL });
+  assert.equal(r.ok, false);
+  assert.match(r.note, /lang attribute/);
+});
+
+const goodRule = (from, want) => ({ from, want, status: 301, location: `https://standpoint.ch${want}`, finalStatus: 200 });
+
+test("redirects: a fully healthy table passes AND reports how many rules it ran", () => {
+  const [r] = checkRedirects([goodRule("/companies/", "/charter/"), goodRule("/my-persona/", "/about-me/")]);
+  assert.equal(r.ok, true);
+  assert.match(r.note, /2 of 2/);
+});
+
+test("⚠ redirects: AN EMPTY TABLE IS RED, not a green tick over zero rules", () => {
+  const [r] = checkRedirects([]);
+  assert.equal(r.ok, false);
+  assert.match(r.observed, /blind, not clean/);
+});
+
+test("redirects: a rule deleted from .htaccess — 404 instead of 301 — fails and says the rule is gone", () => {
+  const out = checkRedirects([{ from: "/my-persona/", want: "/about-me/", status: 404, location: null, finalStatus: null }]);
+  const bad1 = out.find((r) => !r.ok);
+  assert.ok(bad1);
+  assert.match(bad1.observed, /the rule is gone/);
+});
+
+test("redirects: a 301 to the WRONG target fails and prints both", () => {
+  const out = checkRedirects([
+    { from: "/sprint/", want: "/charter/", status: 301, location: "https://standpoint.ch/governance/", finalStatus: 200 },
+  ]);
+  const bad1 = out.find((r) => !r.ok);
+  assert.match(bad1.observed, /governance/);
+});
+
+test("⚠ redirects: A 301 TO A DEAD PAGE fails — the case that is invisible to either half alone", () => {
+  /*
+   * Worse than no redirect: a 404 loses one citation, a 301 to a dead page
+   * tells four answer engines that page is the successor to the old one.
+   */
+  const out = checkRedirects([
+    { from: "/storybuilding-book", want: "/the-book/", status: 301, location: "https://standpoint.ch/the-book/", finalStatus: 404 },
+  ]);
+  const bad1 = out.find((r) => !r.ok);
+  assert.ok(bad1);
+  assert.match(bad1.note, /DEAD/);
+});
+
+test("redirects: one bad rule among many still reports the coverage of the rest", () => {
+  const out = checkRedirects([
+    goodRule("/companies/", "/charter/"),
+    { from: "/my-persona/", want: "/about-me/", status: 404, location: null, finalStatus: null },
+    goodRule("/cases-studies/", "/case-studies/"),
+  ]);
+  assert.equal(out.filter((r) => !r.ok).length, 1);
+  assert.ok(out.some((r) => r.ok && /of 3/.test(r.note)));
+});
+
+test("redirects: a transport failure is named as one, not as a missing rule", () => {
+  const out = checkRedirects([{ from: "/companies/", want: "/charter/", transportError: "ETIMEDOUT" }]);
+  const bad1 = out.find((r) => !r.ok);
+  assert.match(bad1.observed, /ETIMEDOUT/);
 });
