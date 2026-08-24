@@ -433,6 +433,7 @@ const GOOD_CYRJ_HOME =
   `<!DOCTYPE html><html lang="en"><head>` +
   `<link rel="canonical" href="https://chartingyourretirementjourney.com/">` +
   `<meta name="robots" content="index, follow">` +
+  `<script defer data-domain="chartingyourretirementjourney.com" src="https://plausible.io/js/script.js"></script>` +
   `</head><body>` +
   "x".repeat(20_000) +
   `</body></html>`;
@@ -465,6 +466,7 @@ test("cyrj home: A STAGING BUILD PUBLISHED OVER PRODUCTION fails on every marker
     `<!DOCTYPE html><html lang="en"><head>` +
     `<link rel="canonical" href="https://new.chartingyourretirementjourney.com/">` +
     `<meta name="robots" content="noindex, nofollow">` +
+    `<script defer data-domain="chartingyourretirementjourney.com" src="https://plausible.io/js/script.js"></script>` +
     `</head><body>` +
     "x".repeat(20_000) +
     `</body></html>`;
@@ -510,4 +512,17 @@ test("cyrj worksheet: a non-200 pages — the printed QR codes lead here", () =>
   const results = checkCyrjWorksheet({ status: 404, body: "" });
   assert.equal(failedWith(results, PAGE).length, 1);
   assert.match(results[0].note, /QR codes/i);
+});
+
+/*
+ * ⚠ Analytics is PAGE-tier, matching standpoint.ch. It is invisible to a
+ * visitor, so the ordinary reading says it is not "broken" — but the gap is
+ * undetectable until someone opens the dashboard weeks later, and there is no
+ * backfill. Added 2026-08-24 [claim-5b7a], after the decision, not before it.
+ */
+test("cyrj home: analytics silently missing is caught — the gap cannot be backfilled", () => {
+  const noAnalytics = GOOD_CYRJ_HOME.replace(/<script[^>]*plausible[^<]*<\/script>/, "");
+  const results = checkCyrjHome({ status: 200, body: noAnalytics });
+  assert.equal(failedWith(results, PAGE).length, 1);
+  assert.match(results[0].note, /Plausible/i);
 });

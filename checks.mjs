@@ -524,7 +524,29 @@ export function checkCyrjHome({ status, body }) {
     out.push(bad(id, PAGE, `CYRJ homepage references the Infomaniak PREVIEW host. That dependency is what the rebuild removed.`, excerpt(body, /[^"']*preview\.infomaniak\.website[^"']*/)));
   }
 
-  return out.length ? out : [ok(id, PAGE, "CYRJ homepage is the live build: canonical, indexable, no wp-content, no preview host.")];
+  /*
+   * ⚠ ANALYTICS IS PAGE-TIER HERE, MATCHING standpoint.ch, AND FOR ITS REASON:
+   * it is invisible to a visitor, so by the ordinary reading it is not "broken"
+   * — but its absence is undetectable until someone opens the Plausible
+   * dashboard weeks later and finds a hole, and by then the traffic it would
+   * have measured is gone. There is no backfill.
+   *
+   * ⚠ Added 2026-08-24 [claim-5b7a], NOT with the rest of these checks. The
+   * earlier pass deliberately left it out because Plausible was undecided for
+   * this site, and an assertion that pages on a site never meant to have
+   * analytics is worse than none. John decided yes; the assertion follows the
+   * decision rather than presuming it.
+   *
+   * ⚠ WHAT THIS CANNOT SEE: that the domain is REGISTERED in the Plausible
+   * account. The script tag being present is all any check here can observe.
+   * A `data-domain` for a site Plausible does not know about loads perfectly
+   * and its events are discarded in silence.
+   */
+  if (!/plausible\.io\/js\//.test(body)) {
+    out.push(bad(id, PAGE, `CYRJ homepage carries no Plausible script. Analytics is off, and the gap cannot be backfilled.`, excerpt(body, /<script[^>]*>/)));
+  }
+
+  return out.length ? out : [ok(id, PAGE, "CYRJ homepage is the live build: canonical, indexable, analytics on, no wp-content, no preview host.")];
 }
 
 /*
