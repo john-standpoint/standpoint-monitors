@@ -89,7 +89,14 @@ hr "Workflow sanity"
 # Not a YAML parser — a check for the two ways these files have actually been broken:
 # a tab (YAML forbids them, and the error is unhelpful), and a lost top-level key.
 for f in .github/workflows/*.yml; do
-  grep -qP '\t' "$f" && die "$f contains a TAB — YAML forbids it and the parser error will not say so."
+  # ⚠⚠ THIS LINE WAS `grep -qP '\t'` AND HAD NEVER ONCE RUN. macOS ships BSD grep,
+  # which has no -P: every invocation printed `grep: invalid option -- P` to stderr and
+  # exited NON-ZERO, so the `&& die` could not fire and the ok() below printed
+  # "...and no tabs" on every ship. A CHECK THAT ERRORS READS EXACTLY LIKE A CHECK THAT
+  # PASSED — this repository's founding bug, sitting inside the command that ships it.
+  # Found 2026-08-31 only because the four error lines were visible in a screenshot.
+  # $(printf '\t') is a literal tab and works on BSD and GNU grep alike.
+  grep -q "$(printf '\t')" "$f" && die "$f contains a TAB — YAML forbids it and the parser error will not say so."
   for key in name on jobs; do
     grep -qE "^${key}:" "$f" || die "$f has lost its top-level '${key}:' key."
   done
@@ -128,6 +135,18 @@ hr "Committing"
 git commit -F "$MSG_FILE" --quiet
 SHA="$(git log -1 --format='%h')"
 ok "$SHA $(git log -1 --format='%s')"
+
+# ⚠⚠ RETIRE THE MESSAGE FILE, BECAUSE A STALE ONE IS SILENTLY REUSED.
+# On 2026-08-31 ff3a203 shipped the storybuilding redirect rule under the message
+# "Give the daily suite its own dead-man switch…" — this morning's text, left in place
+# after 0e5cb7e. Two consecutive commits, identical messages, different work. The script
+# even PRINTED the message first, which read as confirmation rather than as a leftover.
+# ⚠ It is the third misleading commit message in this repo (620c875, 2026-08-20).
+# Moving it means the next run hits the existing "No .ship-msg … Refusing to commit"
+# guard, which forces a fresh message instead of inheriting one. Moved, not deleted:
+# a failed push below should not cost the text.
+mv "$MSG_FILE" "$MSG_FILE.sent"
+ok "$(basename "$MSG_FILE") retired to $(basename "$MSG_FILE").sent — the next ship needs its own message."
 
 hr "Pushing"
 git push --quiet

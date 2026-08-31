@@ -138,17 +138,25 @@ const REDIRECT_RULES = [
    *   storybuilding.standpoint.ch    301   server: gunicorn
    *   standpoint.ch/storybuilding/   200   server: Apache
    *
-   * ⚠ Per John, that subdomain **used to point to a book-launch service, and
-   * that service has been closed.** So a URL cited seventeen times by answer
-   * engines is redirected by machinery belonging to a company that no longer
-   * trades. It answers correctly today. Nothing anywhere would notice the day
-   * it stops — which is the entire reason this line exists.
+   * Per John, that subdomain **used to point to a book-launch service that has
+   * since closed**. It does not point there now:
    *
-   * ⚠ THIS CHECK MAKES THE FAILURE VISIBLE. IT DOES NOT PREVENT IT. The actual
-   * fix is to move the redirect onto hosting John controls; DNS is a bare A
-   * record to 84.16.66.164 with no CNAME, so if that address is reassigned the
-   * subdomain begins serving somebody else's content under standpoint.ch. A
-   * monitor cannot help with that. Do not read a green line here as safety.
+   *   whois 84.16.66.164  ->  netname: INFOMANIAK-NETWORK, country: CH
+   *
+   * ⚠⚠ AN EARLIER DRAFT OF THIS COMMENT CALLED IT A SUBDOMAIN-TAKEOVER RISK AND
+   * SAID A CITED URL WAS SERVED BY A COMPANY THAT NO LONGER TRADES. THAT WAS
+   * WRONG, and it is left recorded here rather than deleted because of HOW it
+   * was wrong: `server: gunicorn` proves a different SERVICE, not a different
+   * OWNER, and John's true recollection about the closed platform supplied a
+   * story the header appeared to confirm. **Two true facts, one false
+   * conclusion, written up with a security framing.** The one command that
+   * could settle it — whois — was run afterwards. Run it first next time.
+   *
+   * ⚠ What remains true, and is why the rule stays: this hop is served by
+   * DIFFERENT SOFTWARE from the site, so it can fail on its own while
+   * standpoint.ch is perfectly healthy. The measured latency says the same —
+   * 130 ms against 9-23 ms for every Infomaniak path rule beside it. Same
+   * provider, different machine, and until now nothing watched it.
    */
   { origin: "https://storybuilding.standpoint.ch", from: "/", want: "/storybuilding/" },
 
