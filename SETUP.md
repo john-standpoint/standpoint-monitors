@@ -178,8 +178,26 @@ nothing to report.
    Size it from the *maximum*, with headroom.
 2. Copy its **ping URL** (looks like `https://hc-ping.com/<uuid>`).
 3. In the repo: **Settings → Secrets and variables → Actions → New repository secret**
-   - **Name:** `DEADMAN_URL` — exactly this, case-sensitive
+   - **Name:** `DEADMAN_URL_FAST` — exactly this, case-sensitive.
+     ⚠ The older name `DEADMAN_URL` is still accepted **for the fast suite only**, so an
+     existing secret needs no action. New setups should use the explicit name.
    - **Value:** the ping URL
+
+3b. **Repeat 1–3 for the DAILY suite**, as a *separate* check, secret `DEADMAN_URL_DAILY`.
+
+   ⚠⚠ **IT MUST BE A DIFFERENT CHECK, NOT THE SAME PING URL.** Two suites sharing one
+   switch lets either keep it green while the other is dead — the hazard that originally
+   kept `--deadman` off the daily suite altogether. Two separate checks let neither.
+   `probe.mjs` refuses to let the daily suite fall back to `DEADMAN_URL` for this reason.
+
+   ⚠ **Size its grace from MEASURED lateness, not from the 06:07 cron.** When GitHub's
+   scheduler degraded in late August 2026 this suite arrived between 5 h 42 m and 12 h 29 m
+   late for five days running. A 30-minute grace would have paged every morning and been
+   muted inside a week — the alert-fatigue failure this repository exists to avoid.
+
+   ⚠ **Until this secret exists, every `probe-daily` run FAILS with exit 3**, because
+   `--deadman` is now passed there and a missing dead-man URL is deliberately never a
+   silent skip. Create the check and add the secret **before** pushing that workflow.
 4. Confirm your healthchecks.io account has an email alert configured — a switch that
    notices silence and tells nobody is the same as no switch.
 

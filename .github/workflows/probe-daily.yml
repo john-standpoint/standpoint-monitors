@@ -37,23 +37,47 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
-      # ⚠ No --deadman here. The liveness signal belongs to exactly one suite,
-      # and it is the fast one. Pinging from two schedules would mean the
-      # daily run alone could keep the switch looking healthy while the
-      # fast probe had silently stopped — which is the precise failure the
-      # switch exists to catch.
-      # ⚠ --alert IS here, though --deadman is not. Liveness belongs to one
-      # suite; the diagnosis belongs to whichever suite found it. The daily suite
-      # is the only one that reports warnings at all, so without this the entire
-      # warn tier — `ticket: off`, `register: admin-only`, the two states that
-      # cost 19 days once — would never reach an inbox with its text attached.
+      # ⚠⚠ --deadman IS HERE AS OF 2026-08-31, AND THE OLD COMMENT SAYING IT MUST
+      # NOT BE WAS RIGHT ABOUT THE HAZARD AND WRONG ABOUT THE REMEDY.
+      #
+      # What it said: liveness belongs to exactly one suite, because a daily run
+      # could otherwise keep the switch looking healthy while the fast probe had
+      # silently stopped. That hazard is real and has not gone away.
+      #
+      # ⚠ But it forbids TWO SUITES SHARING ONE SWITCH. It does not forbid two
+      # switches. Sharing lets either suite mask the other; one switch each lets
+      # neither. The original wording collapsed those into a single prohibition
+      # and cost the daily suite any liveness signal at all.
+      #
+      # ⚠⚠ WHAT THAT COST, MEASURED: when GitHub's scheduler degraded on 26 Aug
+      # 2026, this suite ran between 5 h 42 m and 12 h 29 m LATE on five
+      # consecutive days, and NOTHING ANYWHERE REPORTED IT. A suite that does not
+      # run produces no red run, no mail and no missing ping — LATE, HEALTHY and
+      # DEAD are the same observation from outside. It surfaced only because the
+      # FAST probe's switch was noisy enough that John went looking.
+      #
+      # ⚠ DEADMAN_URL_DAILY must be its OWN healthchecks check, never the fast
+      # one's URL. probe.mjs enforces this: the legacy DEADMAN_URL falls back for
+      # the `fast` suite ALONE and is rejected here, precisely so a copied secret
+      # cannot recreate the masking bug this comment is about.
+      #
+      # ⚠ Size its grace from MEASURED lateness, not from the cron. Delivery has
+      # been hours late for days; a 30-minute grace would page every morning and
+      # be muted within a week.
+      #
+      # ⚠ --alert is separate and unchanged. Liveness belongs to one suite; the
+      # diagnosis belongs to whichever suite found it. The daily suite is the only
+      # one reporting warnings at all, so without --alert the entire warn tier —
+      # `ticket: off`, `register: admin-only`, the two states that cost 19 days
+      # once — would never reach an inbox with its text attached.
       - name: Run the daily probe
         env:
+          DEADMAN_URL_DAILY: ${{ secrets.DEADMAN_URL_DAILY }}
           HC_PING_KEY: ${{ secrets.HC_PING_KEY }}
-        run: node probe.mjs --suite daily --alert
+        run: node probe.mjs --suite daily --deadman --alert

@@ -19,7 +19,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PAGE, WARN } from "./checks.mjs";
-import { alertBody, alertPingAccepted, annotation, report } from "./probe.mjs";
+import {
+  alertBody,
+  alertPingAccepted,
+  annotation,
+  deadmanEnvName,
+  report,
+  resolveDeadmanUrl,
+} from "./probe.mjs";
 
 /* Quieten the reporter; these tests are about the return value, not the prose. */
 const silence = () => {
@@ -366,4 +373,79 @@ test("a partial GitHub environment produces NO url rather than a broken one", ()
     GITHUB_RUN_ID: "12345",
   });
   assert.ok(!body.includes("actions/runs"), `built a URL from an incomplete environment:\n${body}`);
+});
+
+/* ------------------------------------------------------------------------ *
+ * The dead-man's switch resolver — added 2026-08-31
+ *
+ * ⚠⚠ THE TEST THAT MATTERS HERE IS THE NEGATIVE ONE. Giving `probe-daily` its
+ * own switch is only safe if a suite can never reach ANOTHER suite's switch. A
+ * generic fallback to the legacy DEADMAN_URL would reintroduce, as the fix, the
+ * exact masking bug that kept --deadman off the daily suite in the first place:
+ * a daily run keeping the FAST switch green while the fast probe was dead.
+ *
+ * ⚠ The resolver was extracted and exported specifically so this could be
+ * proven. `pingDeadman` was never exported and therefore never tested — which
+ * is how a single hardcoded env var survived unremarked until an outage.
+ * ------------------------------------------------------------------------ */
+
+test("the env var name is derived per suite, not hardcoded", () => {
+  assert.equal(deadmanEnvName("fast"), "DEADMAN_URL_FAST");
+  assert.equal(deadmanEnvName("daily"), "DEADMAN_URL_DAILY");
+  assert.equal(deadmanEnvName("weekly"), "DEADMAN_URL_WEEKLY");
+});
+
+test("each suite resolves its OWN variable when set", () => {
+  const env = { DEADMAN_URL_FAST: "https://hc/fast", DEADMAN_URL_DAILY: "https://hc/daily" };
+  assert.equal(resolveDeadmanUrl("fast", env).url, "https://hc/fast");
+  assert.equal(resolveDeadmanUrl("daily", env).url, "https://hc/daily");
+});
+
+test("the legacy DEADMAN_URL still works for the fast suite, so no secret has to be touched", () => {
+  const got = resolveDeadmanUrl("fast", { DEADMAN_URL: "https://hc/legacy" });
+  assert.equal(got.url, "https://hc/legacy");
+  assert.equal(got.name, "DEADMAN_URL", "the reported name must be the one actually used");
+});
+
+test("⚠ the DAILY suite must NEVER fall back to the fast suite's legacy DEADMAN_URL", () => {
+  const got = resolveDeadmanUrl("daily", { DEADMAN_URL: "https://hc/fast-switch" });
+  assert.equal(
+    got.url,
+    undefined,
+    "daily reached the fast suite's switch — this is the masking bug, and it would keep the " +
+      "fast switch green while the fast probe was dead",
+  );
+  assert.equal(got.name, "DEADMAN_URL_DAILY", "the error must name the variable the operator should set");
+});
+
+test("⚠ no suite other than fast gets the legacy fallback either", () => {
+  for (const suite of ["daily", "weekly"]) {
+    assert.equal(
+      resolveDeadmanUrl(suite, { DEADMAN_URL: "https://hc/fast-switch" }).url,
+      undefined,
+      `${suite} fell back to the shared legacy variable`,
+    );
+  }
+});
+
+test("a per-suite variable WINS over the legacy one rather than being shadowed by it", () => {
+  const got = resolveDeadmanUrl("fast", {
+    DEADMAN_URL_FAST: "https://hc/new",
+    DEADMAN_URL: "https://hc/legacy",
+  });
+  assert.equal(got.url, "https://hc/new");
+  assert.equal(got.name, "DEADMAN_URL_FAST");
+});
+
+test("an UNSET secret renders as an empty string, and empty must not count as configured", () => {
+  /* GitHub interpolates a missing secret to "" rather than omitting the var —
+   * so `in` and `!== undefined` are both wrong tests, and truthiness is right. */
+  const got = resolveDeadmanUrl("fast", { DEADMAN_URL_FAST: "", DEADMAN_URL: "https://hc/legacy" });
+  assert.equal(got.url, "https://hc/legacy", "an empty per-suite var blocked the working fallback");
+});
+
+test("nothing configured resolves to no url, so the caller can fail hard", () => {
+  const got = resolveDeadmanUrl("daily", {});
+  assert.equal(got.url, undefined);
+  assert.equal(got.name, "DEADMAN_URL_DAILY");
 });

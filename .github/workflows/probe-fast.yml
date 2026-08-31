@@ -57,7 +57,50 @@ name: Probe · fast (best-effort, ~hourly in practice)
 # that has stopped monitoring looks exactly like one with nothing to report.
 # The dead-man's switch below is the only thing that catches it — which is why
 # --deadman is passed here, on the most frequent suite, and why a missing
-# DEADMAN_URL is a hard failure rather than a skipped step.
+# DEADMAN_URL_FAST is a hard failure rather than a skipped step.
+#
+# ---------------------------------------------------------------------------
+# ⚠⚠ 2026-08-31 — THE MEASUREMENT ABOVE NO LONGER DESCRIBES GITHUB. READ ON
+# BEFORE SIZING ANYTHING FROM IT.
+#
+# The 2026-08-16/17 numbers (median 41, worst 109) held for ten days and were
+# re-confirmed over 21–25 Aug: median 34, worst 114, ZERO breaches of the
+# 150-minute tolerance across ~160 gaps. The 150 was sized correctly and is not
+# the defect.
+#
+# Then delivery broke, and has not recovered:
+#
+#     21–25 Aug   median  34 min   max 114     0 breaches
+#     28–31 Aug   median 221 min   max 719    12 of 16 gaps breach
+#
+# ⚠ NOTHING IN THIS REPOSITORY FAILED. 401 runs, 401 pings, every one green.
+# A manual workflow_dispatch during the worst of it started IMMEDIATELY and went
+# green in 16 s. GitHub accepts the schedule event and delivers it hours late.
+# Not the branch, not a filter, not the 60-day disable, not billing, not the
+# checks, not the runners — all excluded by that one manual run.
+#
+# ⚠ DO NOT WIDEN period/grace TO COVER 719 MINUTES. A ~12-hour tolerance cannot
+# detect a dead probe within a working day, which is the switch's entire job.
+# Sizing from the maximum is right; sizing from an OUTAGE's maximum is not.
+# Re-measure over a settled week before touching it.
+#
+# ⚠⚠ AND THE THING A FUTURE READER MUST NOT INFER FROM A GREEN SWITCH:
+# SINCE 2026-08-31 THIS SUITE IS ALSO TRIGGERED FROM OUTSIDE GITHUB — an hourly
+# cron-job.org job (id 8357337, `45 * * * *`) POSTing to this workflow's
+# `dispatches` endpoint with a fine-grained PAT. The probe still RUNS here on
+# purpose: triggering it from the host that serves the sites would probe them
+# from inside their own network and stop seeing DNS and edge failures.
+#
+# The consequence is deliberate and easy to miss: THE DEAD-MAN'S SWITCH NOW
+# MEASURES cron-job.org, NOT GITHUB'S SCHEDULER. A green switch no longer means
+# the cron below is being delivered — the probe is kept alive either way. That
+# is the point, and it also retires the instrument that detected this outage.
+# If you want to know whether GitHub's scheduler is healthy, read the run list
+# and look at the `Scheduled` events; the switch will not tell you.
+#
+# ⚠ The external trigger's PAT expires 2027-01-14. Its death is self-catching —
+# the system falls back to the degraded cron and the switch fires, late and
+# noisy — but it will look like a GitHub problem, not a token problem.
 
 on:
   schedule:
@@ -85,9 +128,9 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
 
@@ -101,6 +144,16 @@ jobs:
       # cannot reach an inbox is a suite nobody hears from.
       - name: Run the fast probe
         env:
+          # ⚠ BOTH are passed on purpose, and this suite is the ONLY place that
+          # is true. DEADMAN_URL_FAST is the name going forward; the bare
+          # DEADMAN_URL is the secret that already exists and keeps working —
+          # probe.mjs falls back to it for the `fast` suite alone. An unset
+          # secret renders as an empty string, which is falsy, so the fallback
+          # engages by itself and NO SECRET HAS TO BE TOUCHED FOR THIS TO SHIP.
+          # ⚠ Do NOT copy this pair into another workflow: the whole reason the
+          # fallback is scoped to `fast` is that a daily run pinging the fast
+          # switch would keep it green while the fast probe was dead.
+          DEADMAN_URL_FAST: ${{ secrets.DEADMAN_URL_FAST }}
           DEADMAN_URL: ${{ secrets.DEADMAN_URL }}
           HC_PING_KEY: ${{ secrets.HC_PING_KEY }}
         run: node probe.mjs --suite fast --deadman --alert

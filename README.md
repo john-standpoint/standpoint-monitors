@@ -51,8 +51,14 @@ built for.
 ⚠ **GitHub disables scheduled workflows after 60 days of repository inactivity.** No run,
 no failure, no mail — a monitoring system that has stopped monitoring looks exactly like
 one with nothing to report. The dead-man's switch is the only thing that catches that,
-which is why `--deadman` runs on the most frequent suite and why a missing `DEADMAN_URL`
+which is why `--deadman` runs on the most frequent suite and why a missing dead-man URL
 is a **hard failure** rather than a skipped step.
+
+⚠ **As of 2026-08-31 `probe-daily` has its own switch too** — see *Secrets* for why that is
+not the masking bug the original one-suite rule was guarding against. ⚠ **And the fast
+suite's switch is now also fed by an external hourly trigger (cron-job.org), so a green
+switch no longer proves GitHub's `schedule` delivery is working.** Read the run list for
+that; the switch will not tell you.
 
 ## Suites
 
@@ -285,7 +291,23 @@ works.**
 
 | Secret | Used by | If missing |
 |---|---|---|
-| `DEADMAN_URL` | `probe-fast` | **Hard failure, exit 3.** Never a silent skip — see below. |
+| `DEADMAN_URL_FAST` *(or legacy `DEADMAN_URL`)* | `probe-fast` | **Hard failure, exit 3.** Never a silent skip — see below. |
+| `DEADMAN_URL_DAILY` | `probe-daily` | **Hard failure, exit 3.** ⚠ Must be its OWN healthchecks check. |
+| `HC_PING_KEY` | every suite, via `--alert` | **Hard failure, exit 3** on an otherwise clean run. |
+
+⚠⚠ **ONE SWITCH PER SUITE, AND THEY MUST NOT BE THE SAME CHECK.** Until 2026-08-31 only
+`probe-fast` had a dead-man's switch, on the reasoning that liveness must belong to exactly
+one suite or a healthy daily run could mask a dead fast one. **That reasoning was right about
+the hazard and wrong about the remedy:** it forbids two suites *sharing one switch*, not two
+switches. The cost of the conflation was measured when GitHub's scheduler degraded — the
+daily suite ran **5 to 12 hours late on five consecutive days and nothing reported it**,
+because a suite that does not run emits no red run, no mail and no missing ping.
+
+⚠ **The legacy `DEADMAN_URL` is accepted for the `fast` suite ALONE**, so the pre-existing
+secret keeps working. It is deliberately *not* a generic fallback: a daily run resolving to
+`DEADMAN_URL` would ping the fast suite's switch and keep it green while the fast probe was
+dead — the masking bug, reintroduced by its own fix. `resolveDeadmanUrl` enforces this and
+`report.test.mjs` proves it, including by mutation.
 
 The natural way to write the ping is `if (!url) return;`. That would reproduce, inside
 the very tool built to prevent it, the bug that cost this estate nine days of a dead

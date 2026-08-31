@@ -745,13 +745,46 @@ async function pingAlert(outcome, suiteName, code) {
  *
  * So: asked for and missing is a hard failure with its own exit code.
  */
-async function pingDeadman() {
-  const url = process.env.DEADMAN_URL;
+/*
+ * ⚠⚠ ONE SWITCH PER SUITE, AND THE FALLBACK IS DELIBERATELY NOT GENERIC.
+ *
+ * Until 2026-08-31 this read a single hardcoded `DEADMAN_URL`, because only the
+ * fast suite pinged. That stopped being adequate when GitHub's scheduler broke:
+ * `probe-daily` ran 5–12 HOURS LATE on five consecutive days and NOTHING COULD
+ * HAVE REPORTED IT. A suite that does not run emits no red run, no mail and no
+ * missing ping — from outside, LATE and HEALTHY and DEAD are one observation.
+ *
+ * ⚠ The obvious implementation is a per-suite variable falling back to the old
+ * `DEADMAN_URL` for any suite. THAT WOULD BE THE MASKING BUG, REINTRODUCED BY
+ * THE FIX: a daily run with only `DEADMAN_URL` set would ping the FAST suite's
+ * switch, keeping it green while the fast probe was dead — the precise failure
+ * `probe-fast.yml`'s header forbids two suites from causing.
+ *
+ * So the fallback is scoped to `fast` ALONE, purely so the existing repository
+ * secret keeps working. Every other suite must name its own variable or fail
+ * hard, exactly as a missing secret has always failed here.
+ */
+export const deadmanEnvName = (suiteName) => `DEADMAN_URL_${suiteName.toUpperCase()}`;
+
+export function resolveDeadmanUrl(suiteName, env = process.env) {
+  const name = deadmanEnvName(suiteName);
+  if (env[name]) return { url: env[name], name };
+  /* Legacy compatibility, fast only — see the block above for why not all suites. */
+  if (suiteName === "fast" && env.DEADMAN_URL) return { url: env.DEADMAN_URL, name: "DEADMAN_URL" };
+  return { url: undefined, name };
+}
+
+async function pingDeadman(suiteName) {
+  const { url, name } = resolveDeadmanUrl(suiteName);
   if (!url) {
     console.error(
-      "\n✗ --deadman was requested but DEADMAN_URL is not set.\n" +
+      `\n✗ --deadman was requested for the ${suiteName} suite but ${name} is not set.\n` +
         "  Refusing to exit 0 on a probe whose liveness signal goes nowhere.\n" +
-        "  Set the DEADMAN_URL repository secret, or drop the --deadman flag deliberately.\n",
+        `  Set the ${name} repository secret, or drop the --deadman flag deliberately.\n` +
+        (suiteName === "fast"
+          ? "  (The legacy DEADMAN_URL is still accepted for this suite only.)\n"
+          : "  ⚠ DEADMAN_URL is NOT accepted here: it belongs to the fast suite, and pinging\n" +
+            "     it from this one would keep that switch green while the fast probe was dead.\n"),
     );
     return false;
   }
@@ -826,13 +859,15 @@ if (isCli) {
    */
   if (wantsDeadman) {
     if (code === 0) {
-      const pinged = await pingDeadman();
+      const pinged = await pingDeadman(suiteName);
       if (!pinged) process.exit(3);
     } else {
       console.log("  dead-man's switch NOT pinged — the run was not clean, and saying otherwise would be a lie.");
       /* Still surface a missing secret, so a misconfiguration cannot hide behind an unrelated failure. */
-      if (!process.env.DEADMAN_URL) {
-        console.error("  ✗ …and DEADMAN_URL is not set either. Fix that separately; it is not caused by the failure above.");
+      if (!resolveDeadmanUrl(suiteName).url) {
+        console.error(
+          `  ✗ …and ${deadmanEnvName(suiteName)} is not set either. Fix that separately; it is not caused by the failure above.`,
+        );
       }
     }
   }
