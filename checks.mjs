@@ -765,6 +765,14 @@ export function checkNotFoundFr(response, { url }) {
  * astro.config.mjs emits meta-refresh pages for these same slugs and those pass
  * no signal to a search engine.
  */
+/*
+ * ⚠ A RULE ON ANOTHER HOST MUST NOT REPORT AS A BARE PATH. The subdomain rule
+ * has `from: "/"`, and a failure line reading `/ no longer 301s` would send the
+ * reader to the homepage of the live site — the wrong system, at the moment
+ * they can least afford it. Failures name what was actually requested.
+ */
+const shown = (o) => `${o.origin ?? ""}${o.from}`;
+
 export function checkRedirects(observations) {
   const id = "redirects";
   const out = [];
@@ -781,7 +789,7 @@ export function checkRedirects(observations) {
 
   for (const o of observations) {
     if (o.transportError) {
-      out.push(bad(id, WARN, `${o.from} could not be reached.`, `transport failure — ${o.transportError}`));
+      out.push(bad(id, WARN, `${shown(o)} could not be reached.`, `transport failure — ${o.transportError}`));
       continue;
     }
     if (o.status !== 301) {
@@ -789,14 +797,14 @@ export function checkRedirects(observations) {
         bad(
           id,
           WARN,
-          `${o.from} no longer 301s.`,
+          `${shown(o)} no longer 301s.`,
           `HTTP ${o.status}${o.status === 404 ? " — the rule is gone from .htaccess" : ""}, expected 301 -> ${o.want}`,
         ),
       );
       continue;
     }
     if (!String(o.location || "").endsWith(o.want)) {
-      out.push(bad(id, WARN, `${o.from} 301s to the wrong place.`, `Location ${o.location || "(absent)"}, expected to end with ${o.want}`));
+      out.push(bad(id, WARN, `${shown(o)} 301s to the wrong place.`, `Location ${o.location || "(absent)"}, expected to end with ${o.want}`));
       continue;
     }
     /*
@@ -805,7 +813,7 @@ export function checkRedirects(observations) {
      * answer engines that a specific page is the successor to the old one.
      */
     if (o.finalStatus !== 200) {
-      out.push(bad(id, WARN, `${o.from} 301s to ${o.want}, which is DEAD.`, `following the redirect gives HTTP ${o.finalStatus}, expected 200`));
+      out.push(bad(id, WARN, `${shown(o)} 301s to ${o.want}, which is DEAD.`, `following the redirect gives HTTP ${o.finalStatus}, expected 200`));
     }
   }
 

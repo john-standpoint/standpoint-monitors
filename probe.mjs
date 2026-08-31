@@ -132,6 +132,27 @@ const REDIRECT_RULES = [
   { from: "/storybuilding-book", want: "/the-book/" },
 
   /*
+   * ⚠⚠ THE ONLY RULE HERE ON A DIFFERENT HOST, AND THE ONLY ONE NOT SERVED BY
+   * THE INFRASTRUCTURE THAT SERVES THE SITE. Added 2026-08-31 [claim-2a5d].
+   *
+   *   storybuilding.standpoint.ch    301   server: gunicorn
+   *   standpoint.ch/storybuilding/   200   server: Apache
+   *
+   * ⚠ Per John, that subdomain **used to point to a book-launch service, and
+   * that service has been closed.** So a URL cited seventeen times by answer
+   * engines is redirected by machinery belonging to a company that no longer
+   * trades. It answers correctly today. Nothing anywhere would notice the day
+   * it stops — which is the entire reason this line exists.
+   *
+   * ⚠ THIS CHECK MAKES THE FAILURE VISIBLE. IT DOES NOT PREVENT IT. The actual
+   * fix is to move the redirect onto hosting John controls; DNS is a bare A
+   * record to 84.16.66.164 with no CNAME, so if that address is reassigned the
+   * subdomain begins serving somebody else's content under standpoint.ch. A
+   * monitor cannot help with that. Do not read a green line here as safety.
+   */
+  { origin: "https://storybuilding.standpoint.ch", from: "/", want: "/storybuilding/" },
+
+  /*
    * ⚠ Block 3b — the case-study PDFs. CHECKING THEM IS NOT ENDORSING THEM.
    * John ruled on 13 August that no redirects would be written for these; they
    * were found live on the server on 19 August anyway. His instruction: do not
@@ -351,7 +372,14 @@ async function run(suiteName) {
   if (wanted.has("redirects")) {
     const observations = [];
     for (const rule of REDIRECT_RULES) {
-      const url = `${liveOrigin()}${rule.from}`;
+      /*
+       * ⚠ `origin` is optional and defaults to the live site, so the eighteen
+       * path rules are untouched. It exists because one rule lives on a
+       * different HOST — see the storybuilding entry above — and a rule table
+       * that could only express paths would have quietly excluded the one
+       * redirect served by machinery nobody controls.
+       */
+      const url = `${rule.origin ?? liveOrigin()}${rule.from}`;
       const first = await fetchWithRetry(url, { follow: false });
       timings.push({ key: `redirect ${rule.from}`, ms: first.ms, attempts: first.attempts, status: first.status });
       if (first.transportError) {

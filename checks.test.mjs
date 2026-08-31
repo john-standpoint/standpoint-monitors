@@ -620,6 +620,76 @@ test("redirects: a fully healthy table passes AND reports how many rules it ran"
   assert.match(r.note, /2 of 2/);
 });
 
+/*
+ * ⚠⚠ THE SUBDOMAIN RULE — the only entry on a different HOST, and the only one
+ * served by infrastructure nobody at Standpoint controls.
+ *
+ * `storybuilding.standpoint.ch` answers 301 from `server: gunicorn`; the target
+ * answers 200 from `server: Apache`. Per John, that subdomain pointed at a
+ * BOOK-LAUNCH SERVICE THAT HAS SINCE CLOSED — so a URL cited seventeen times by
+ * answer engines is being redirected by a company that no longer trades.
+ */
+
+test("⚠ redirects: a rule on ANOTHER HOST reports the full URL, never a bare path", () => {
+  /*
+   * The subdomain rule is `from: "/"`. A failure line reading `/ no longer
+   * 301s` would send the reader to the live homepage — the wrong system, at the
+   * moment they can least afford the detour.
+   */
+  const out = checkRedirects([
+    {
+      origin: "https://storybuilding.standpoint.ch",
+      from: "/",
+      want: "/storybuilding/",
+      status: 404,
+      location: null,
+      finalStatus: null,
+    },
+  ]);
+  const failed = out.find((r) => !r.ok);
+  assert.ok(failed);
+  assert.ok(
+    failed.note.includes("https://storybuilding.standpoint.ch/"),
+    `the failing host must be named, got: ${failed.note}`,
+  );
+  assert.ok(!/^\/ /.test(failed.note), "must not report as a bare path on the live site");
+});
+
+test("⚠ redirects: the dead-target case on the subdomain — the shape that will actually happen here", () => {
+  /*
+   * The realistic failure is not the rule vanishing; it is the closed service's
+   * host answering something other than a 301, or 301ing into nothing. A 301 to
+   * a dead page is worse than no redirect: it tells four answer engines that a
+   * specific page is the successor.
+   */
+  const out = checkRedirects([
+    {
+      origin: "https://storybuilding.standpoint.ch",
+      from: "/",
+      want: "/storybuilding/",
+      status: 301,
+      location: "https://standpoint.ch/storybuilding/",
+      finalStatus: 404,
+    },
+  ]);
+  const failed = out.find((r) => !r.ok);
+  assert.ok(failed);
+  assert.match(failed.note, /which is DEAD/);
+  assert.ok(failed.note.includes("storybuilding.standpoint.ch"));
+});
+
+test("redirects: a path rule without an origin still reads as a bare path, with no 'undefined' prefix", () => {
+  /*
+   * The eighteen existing rules have no `origin`. If the default leaked, every
+   * one of their failure lines would begin with the word `undefined` — cosmetic
+   * in a log, corrosive in an alert that is meant to be read at speed.
+   */
+  const out = checkRedirects([{ from: "/my-persona/", want: "/about-me/", status: 404, location: null, finalStatus: null }]);
+  const failed = out.find((r) => !r.ok);
+  assert.ok(!failed.note.includes("undefined"), `leaked an undefined origin: ${failed.note}`);
+  assert.match(failed.note, /^\/my-persona\//);
+});
+
 test("⚠ redirects: AN EMPTY TABLE IS RED, not a green tick over zero rules", () => {
   const [r] = checkRedirects([]);
   assert.equal(r.ok, false);
