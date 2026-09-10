@@ -50,8 +50,14 @@ esac
 # ⚠ The quarantine lives inside .git/ deliberately: same filesystem (so rename works, a
 # cross-device mv would be a copy+unlink and unlink is the thing that is refused) and never
 # tracked, whatever this repo's .gitignore happens to say.
+# ⚠ Unique destination names, and this is not fussiness: a repo can strand several
+# `index.lock` files, and `mv` into a directory would collide on the second one, fail, and
+# leave the lock exactly where it was blocking git. That bit this script on the day it was
+# written. ⚠ maxdepth 4, not 3 — `refs/remotes/origin/main.lock` is four deep, and it is
+# the one a PUSH strands.
 LOCKS="$(git rev-parse --git-dir)/_stranded-locks"; mkdir -p "$LOCKS"
-find "$(git rev-parse --git-dir)" -maxdepth 3 -name '*.lock' -exec mv {} "$LOCKS/" \; 2>/dev/null || true
+find "$(git rev-parse --git-dir)" -maxdepth 4 -name '*.lock' -print0 2>/dev/null |
+  while IFS= read -r -d '' f; do mv "$f" "$LOCKS/$(basename "$f").$$.$RANDOM" 2>/dev/null || true; done
 
 # ⚠ The token is never echoed, and any accidental appearance in git's output is filtered.
 git -c credential.helper='!f(){ echo username=x; echo "password=$GT"; };f' \
