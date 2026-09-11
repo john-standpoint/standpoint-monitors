@@ -125,7 +125,12 @@ jobs:
   probe:
     name: Page-level checks
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # ⚠ 10, not 5, since 2026-09-11 [claim-e7a2]: a transport failure is now
+    # re-checked after 60 s (CONFIRM_DELAY_MS in probe.mjs), one attempt per
+    # failed target. Fast worst case, every target timing out twice:
+    # 4 x (3 x 20 s + 2 x 4 s) + 60 s + 4 x 20 s = ~7 min. A job killed by this
+    # limit sends NO alert body at all, so the limit must sit above the probe.
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v7

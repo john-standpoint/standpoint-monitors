@@ -221,6 +221,44 @@ const FETCH_TIMEOUT_MS = 20_000;
 const ATTEMPTS = 3;
 const RETRY_DELAY_MS = 4_000;
 
+/*
+ * ⚠⚠ THE RE-CHECK — ONE TRANSPORT FAILURE IS A SAMPLE, NOT AN OUTAGE. Added
+ * 2026-09-11 [claim-e7a2], on John's go-ahead.
+ *
+ * The retries above cover about eight seconds. Every red fast run from 4 to
+ * 11 September was the same shape: the three targets on Infomaniak's
+ * 185.125.27.166 refused in 0 ms on all three attempts, scan.standpoint.ch on
+ * Vercel was fine, and the NEXT run, about an hour later, was green. Each one
+ * mailed John about an outage whose true length was somewhere between 8 s and
+ * an hour — unmeasured. Seven of those in eleven days is the alert-fatigue
+ * shape this repository argues against everywhere else.
+ *
+ * So a target that fails AT THE TRANSPORT LAYER is fetched once more, a minute
+ * later, before the run is allowed to go red:
+ *
+ *   - recovered  → the run is judged on the second answer. It still leaves a
+ *                  trace: the log says so, and the healthchecks CLEAR ping
+ *                  carries a body naming the blip, so the events list keeps a
+ *                  record without anybody being mailed.
+ *   - still down → the run goes red, and `observed` carries BOTH failures, so
+ *                  the alert says "refused, and still refused 60 s later".
+ *
+ * ⚠ ONLY transport failures (status 0) are re-checked. A 503, a staging build,
+ * a missing marker — those are answers the server actually gave, and waiting a
+ * minute to hear them again would only delay a real alert.
+ *
+ * ⚠ The re-check uses ONE attempt, not three. The first pass already retried;
+ * the point here is a second sample a minute later, and keeping it to one
+ * attempt bounds the worst case (every target timing out twice) under the job's
+ * timeout-minutes. If you raise CONFIRM_DELAY_MS, re-do that arithmetic.
+ *
+ * ⚠ What this does NOT do: say how long the host was really gone. It narrows
+ * "8 s to an hour" to "8 s to about a minute" (recovered) or "at least a minute"
+ * (still down). That is the question John can act on; the exact length is not.
+ */
+const CONFIRM_DELAY_MS = 60_000;
+const CONFIRM_ATTEMPTS = 1;
+
 /* ------------------------------------------------------------------------ *
  * Suites
  * ------------------------------------------------------------------------ */
@@ -281,11 +319,11 @@ const SUITES = {
  * emits exactly those meta-refresh pages for these same slugs, and they pass no
  * signal to a search engine, so telling them apart is the entire job.
  */
-async function fetchOnce(url, { follow = true } = {}) {
+async function fetchOnce(url, { follow = true, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
   const started = Date.now();
   const response = await fetch(url, {
     redirect: follow ? "follow" : "manual",
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       /*
        * Named so that a spike in the server logs is attributable, and so that
@@ -306,15 +344,26 @@ async function fetchOnce(url, { follow = true } = {}) {
   };
 }
 
-async function fetchWithRetry(url, options) {
+export async function fetchWithRetry(url, options = {}) {
+  const { attempts = ATTEMPTS, retryDelayMs = RETRY_DELAY_MS, ...fetchOptions } = options;
   let lastError;
-  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+  /*
+   * How long each failed attempt took to fail is recorded, not discarded. It
+   * is half the diagnosis on its own: 0–50 ms is a refusal or a reset at the
+   * door, ~20 000 ms is the timeout, and the two want different people.
+   * Until 2026-09-11 a transport failure reported `0 ms` — a constant, which
+   * read like a measurement.
+   */
+  const failedAfterMs = [];
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const started = Date.now();
     try {
-      const result = await fetchOnce(url, options);
+      const result = await fetchOnce(url, fetchOptions);
       return { ...result, attempts: attempt };
     } catch (error) {
       lastError = error;
-      if (attempt < ATTEMPTS) await sleep(RETRY_DELAY_MS);
+      failedAfterMs.push(Date.now() - started);
+      if (attempt < attempts) await sleep(retryDelayMs);
     }
   }
   /*
@@ -322,13 +371,106 @@ async function fetchWithRetry(url, options) {
    * never swallowed into a generic failure. DNS failure, TLS failure, timeout
    * and connection-refused are four different problems with four different
    * fixes, and collapsing them costs a diagnosis every time.
+   *
+   * ⚠⚠ THAT PARAGRAPH WAS FALSE FROM 2026-08-16 TO 2026-09-11, directly above
+   * the line that broke it: `String(lastError?.message || lastError)`. Node's
+   * fetch is undici, and EVERY transport failure it throws is the same
+   * `TypeError: fetch failed` — the real reason lives in `error.cause`. So
+   * `.message` was the one property guaranteed to be identical for all four
+   * classes. Five incidents, five copies of "fetch failed", and nothing tested
+   * what the string was (found 2026-09-08, fixed 2026-09-11 [claim-e7a2]).
+   * report.test.mjs now fails if a REAL undici failure describes itself as
+   * "fetch failed", which is the only thing that stops this shipping again.
    */
+  const described = describeTransportError(lastError);
   return {
     status: 0,
     body: "",
-    ms: 0,
-    attempts: ATTEMPTS,
-    transportError: String(lastError?.message || lastError),
+    ms: failedAfterMs.at(-1) ?? 0,
+    attempts,
+    transportClass: described.klass,
+    transportError: `${described.text} · ${attempts} attempt(s), failed after ${failedAfterMs.join("/")} ms`,
+    /* The same facts without the prose — used where a second failure is appended to a first. */
+    transportBrief: `${described.klass}${described.codes.length ? ` [${described.codes.join(", ")}]` : ""} · ${attempts} attempt(s), failed after ${failedAfterMs.join("/")} ms`,
+  };
+}
+
+/*
+ * Ordered by PRIORITY, not alphabetically, because one failure can carry
+ * several codes. Happy-eyeballs on a dual-stack host throws an AggregateError
+ * holding one error per address family — and both Infomaniak domains ARE dual
+ * stack, while GitHub's runners have no IPv6 route. So "ECONNREFUSED on v4 +
+ * ENETUNREACH on v6" is a REFUSAL (the v6 half is the runner's own limitation,
+ * present on every run); reading it as UNREACHABLE would blame the network.
+ * The owner column is the point: each class goes to someone different.
+ */
+const TRANSPORT_CLASSES = [
+  ["DNS", /^(ENOTFOUND|EAI_AGAIN|EAI_NONAME|EAI_FAIL|ENODATA|ESERVFAIL)$/, "the name did not resolve — ENOTFOUND points at the DNS zone or registrar; EAI_AGAIN is a temporary resolver failure, often the runner's own"],
+  ["TLS", /^(CERT_|ERR_TLS|ERR_SSL|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|HOSTNAME_MISMATCH)/, "the TLS handshake failed — the certificate or its chain"],
+  ["REFUSED", /^ECONNREFUSED$/, "the host refused the connection — the web host or its firewall"],
+  ["RESET", /^(ECONNRESET|EPIPE|ECONNABORTED|UND_ERR_SOCKET|UND_ERR_CLOSED)$/, "the host opened the connection and dropped it — the web host or its firewall"],
+  ["TIMEOUT", /^(TimeoutError|UND_ERR_CONNECT_TIMEOUT|ETIMEDOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT)$/, "no answer in time — host overloaded, or packets silently dropped"],
+  ["UNREACHABLE", /^(ENETUNREACH|EHOSTUNREACH|EADDRNOTAVAIL|ENETDOWN|EHOSTDOWN)$/, "no route to the host — the network between the runner and the host"],
+];
+
+/*
+ * Walks the WHOLE cause graph — `cause` links and `AggregateError.errors` —
+ * collecting every string `code` and every message other than undici's
+ * wrapper. Bounded by a node count, because neither a cause chain nor an
+ * errors array is guaranteed to be finite or acyclic.
+ *
+ * Pure, and exported, so the tests can feed it both hand-built chains and
+ * REAL errors thrown by this Node's fetch.
+ */
+export function describeTransportError(error, { maxNodes = 16 } = {}) {
+  const codes = [];
+  const messages = [];
+  const seen = new Set();
+  const queue = [error];
+
+  while (queue.length && seen.size < maxNodes) {
+    const node = queue.shift();
+    if (node === null || node === undefined || seen.has(node)) continue;
+    seen.add(node);
+    if (typeof node !== "object") {
+      const text = String(node).trim();
+      if (text && !messages.includes(text)) messages.push(text);
+      continue;
+    }
+    /*
+     * A timeout from AbortSignal.timeout() is a DOMException whose `code` is
+     * the NUMBER 23 — meaningless — so its `name` stands in for a code.
+     */
+    const code =
+      typeof node.code === "string" && node.code
+        ? node.code
+        : node.name === "TimeoutError" || node.name === "AbortError"
+          ? node.name
+          : null;
+    if (code && !codes.includes(code)) codes.push(code);
+
+    const message = typeof node.message === "string" ? node.message.replace(/\s+/g, " ").trim() : "";
+    if (message && message !== "fetch failed" && !messages.includes(message)) messages.push(message);
+
+    if (Array.isArray(node.errors)) queue.push(...node.errors);
+    if ("cause" in node) queue.push(node.cause);
+  }
+
+  const match = TRANSPORT_CLASSES.find(([, pattern]) => codes.some((c) => pattern.test(c)));
+  const klass = match ? match[0] : codes.length ? "UNCLASSIFIED" : "NO CAUSE";
+  const hint = match
+    ? match[2]
+    : codes.length
+      ? "a code this probe does not know yet — add it to TRANSPORT_CLASSES"
+      : "the error carried no code and no cause — nothing to go on; this is itself worth reporting";
+
+  let detail = messages.join(" | ") || String(error?.message || error || "no message");
+  if (detail.length > 300) detail = `${detail.slice(0, 297)}...`;
+
+  return {
+    klass,
+    codes,
+    text: `${klass}${codes.length ? ` [${codes.join(", ")}]` : ""} ${detail} — ${hint}`,
   };
 }
 
@@ -338,21 +480,20 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * The run
  * ------------------------------------------------------------------------ */
 
-async function run(suiteName) {
-  const suite = SUITES[suiteName];
-  if (!suite) throw new Error(`Unknown suite '${suiteName}'. Expected one of: ${Object.keys(SUITES).join(", ")}`);
-
-  const allowed = new Set(suite.severities);
+/*
+ * One pass over a suite. `fetchUrl(key, url, options)` is the only way it
+ * touches the network, so the same checks can run against live fetches (first
+ * pass), against a mix of remembered answers and fresh re-fetches (the
+ * re-check), or against canned responses in a test.
+ */
+async function runPass(suite, fetchUrl) {
   const wanted = new Set(suite.checks);
   const results = [];
   const timings = [];
 
   const get = async (key) => {
-    const response = await fetchWithRetry(TARGETS[key]);
-    timings.push({ key, ms: response.ms, attempts: response.attempts, status: response.status });
-    if (response.transportError) {
-      console.log(`  ✗ ${key}: transport failure after ${response.attempts} attempts — ${response.transportError}`);
-    }
+    const response = await fetchUrl(key, TARGETS[key]);
+    timings.push({ key, ms: response.ms, attempts: response.attempts, status: response.status, rechecked: response.rechecked });
     return response;
   };
 
@@ -388,8 +529,8 @@ async function run(suiteName) {
        * redirect served by machinery nobody controls.
        */
       const url = `${rule.origin ?? liveOrigin()}${rule.from}`;
-      const first = await fetchWithRetry(url, { follow: false });
-      timings.push({ key: `redirect ${rule.from}`, ms: first.ms, attempts: first.attempts, status: first.status });
+      const first = await fetchUrl(`redirect ${rule.from}`, url, { follow: false });
+      timings.push({ key: `redirect ${rule.from}`, ms: first.ms, attempts: first.attempts, status: first.status, rechecked: first.rechecked });
       if (first.transportError) {
         observations.push({ ...rule, transportError: first.transportError });
         continue;
@@ -400,7 +541,7 @@ async function run(suiteName) {
        */
       let finalStatus = null;
       if (first.status === 301) {
-        const followed = await fetchWithRetry(url);
+        const followed = await fetchUrl(`redirect ${rule.from} (followed)`, url);
         finalStatus = followed.transportError ? 0 : followed.status;
       }
       observations.push({ ...rule, status: first.status, location: first.location, finalStatus });
@@ -423,7 +564,70 @@ async function run(suiteName) {
     results.push(...checkHiddenPage(await get("hidden"), { sitemapUrls, url: TARGETS.hidden }));
   }
 
-  return { results, timings, allowed };
+  return { results, timings };
+}
+
+const cacheKey = (url, options = {}) => `${options.follow === false ? "manual" : "follow"} ${url}`;
+
+/*
+ * The run is one pass, plus — only if something failed at the transport layer
+ * — a second pass a minute later in which every answer that DID arrive is
+ * reused verbatim and only the failed fetches are made again. Reusing the good
+ * answers is deliberate: re-fetching them would double the traffic and could
+ * turn a green check red for a reason unrelated to the one being re-checked.
+ *
+ * The injectable parameters exist for report.test.mjs, which proves the
+ * re-check logic against canned responses and a sleep that returns at once.
+ */
+export async function run(
+  suiteName,
+  { fetchImpl = fetchWithRetry, sleepImpl = sleep, confirmDelayMs = CONFIRM_DELAY_MS, log = console.log } = {},
+) {
+  const suite = SUITES[suiteName];
+  if (!suite) throw new Error(`Unknown suite '${suiteName}'. Expected one of: ${Object.keys(SUITES).join(", ")}`);
+  const allowed = new Set(suite.severities);
+
+  const firstSeen = new Map();
+  const first = await runPass(suite, async (key, url, options = {}) => {
+    const response = await fetchImpl(url, options);
+    firstSeen.set(cacheKey(url, options), { key, response });
+    if (response.transportError) {
+      log(`  ✗ ${key}: transport failure after ${response.attempts} attempts — ${response.transportError}`);
+    }
+    return response;
+  });
+
+  const suspects = [...firstSeen.values()].filter(({ response }) => response.status === 0);
+  if (suspects.length === 0) return { ...first, allowed, recovered: [] };
+
+  const delayS = Math.round(confirmDelayMs / 1000);
+  log(
+    `  ↻ ${suspects.length} target(s) failed at the transport layer — re-checking them once in ${delayS} s ` +
+      `before calling it an outage: ${suspects.map((s) => s.key).join(", ")}`,
+  );
+  await sleepImpl(confirmDelayMs);
+
+  const recovered = [];
+  const second = await runPass(suite, async (key, url, options = {}) => {
+    const seen = firstSeen.get(cacheKey(url, options));
+    if (seen && seen.response.status !== 0) return seen.response;
+    if (!seen) return fetchImpl(url, options);
+
+    const response = await fetchImpl(url, { ...options, attempts: CONFIRM_ATTEMPTS });
+    if (response.status !== 0) {
+      recovered.push({ key, url, status: response.status, firstError: seen.response.transportError });
+      log(`  ↻ ${key}: answered HTTP ${response.status} on the re-check ${delayS} s later — first pass: ${seen.response.transportError}`);
+      return { ...response, rechecked: true };
+    }
+    log(`  ✗ ${key}: STILL failing ${delayS} s later — ${response.transportError}`);
+    return {
+      ...response,
+      rechecked: true,
+      transportError: `${response.transportError}; and ${delayS} s earlier: ${seen.response.transportBrief ?? seen.response.transportError}`,
+    };
+  });
+
+  return { ...second, allowed, recovered };
 }
 
 /* ------------------------------------------------------------------------ *
@@ -505,7 +709,7 @@ export function annotation(failure, suiteName) {
  * whole diagnosis — `ticket=off` is not a symptom to investigate, it is the
  * answer.
  */
-export function report({ results, timings, allowed }, suiteName) {
+export function report({ results, timings, allowed, recovered = [] }, suiteName) {
   const failures = results.filter((r) => !r.ok && allowed.has(r.severity));
   const pages = failures.filter((r) => r.severity === PAGE);
   const warns = failures.filter((r) => r.severity === WARN);
@@ -569,6 +773,16 @@ export function report({ results, timings, allowed }, suiteName) {
   }
 
   for (const pass of passes) console.log(`  ✓ ${pass.id}: ${pass.note}`);
+  /*
+   * A recovery is not a pass and not a failure, and it is printed as neither.
+   * It is the record of a blip that the re-check absorbed — kept visible so
+   * that a host which blips every night is noticed as a pattern long before
+   * it becomes an outage.
+   */
+  for (const r of recovered) {
+    console.log(`  ↻ ${r.key}: failed at the transport layer, then answered HTTP ${r.status} on the re-check`);
+    console.log(`          first pass: ${r.firstError}`);
+  }
   for (const failure of warns) {
     console.log(`  ⚠ WARN  ${failure.id}: ${failure.note}`);
     console.log(`          observed: ${failure.observed}`);
@@ -596,7 +810,7 @@ export function report({ results, timings, allowed }, suiteName) {
     `\n  timings (recorded, NOT asserted on — no threshold until a week of warm samples exists):`,
   );
   for (const t of timings) {
-    console.log(`    ${t.key}: HTTP ${t.status} in ${t.ms} ms, ${t.attempts} attempt(s)`);
+    console.log(`    ${t.key}: HTTP ${t.status} in ${t.ms} ms, ${t.attempts} attempt(s)${t.rechecked ? " — on the re-check" : ""}`);
   }
 
   if (pages.length) {
@@ -679,6 +893,22 @@ export function alertBody({ results, allowed }, suiteName, env = process.env) {
 }
 
 /*
+ * The body of a CLEAR ping. Empty when nothing happened, which is most runs;
+ * otherwise one line per target that failed at the transport layer and then
+ * answered on the re-check. healthchecks stores it against the OK event and
+ * sends no mail for it — which is exactly the weight a blip deserves.
+ */
+export function clearBody({ recovered = [] }, suiteName) {
+  if (recovered.length === 0) return "";
+  const lines = [`standpoint-monitors · suite ${suiteName} · clean, after ${recovered.length} re-check(s)`, ""];
+  for (const r of recovered) {
+    lines.push(`RECOVERED  ${r.key}: answered HTTP ${r.status} on the re-check`);
+    lines.push(`      first pass: ${r.firstError}`);
+  }
+  return lines.join("\n");
+}
+
+/*
  * ⚠⚠ WHETHER A PING WAS ACCEPTED IS ITS OWN FUNCTION, AND THIS IS WHY.
  *
  * The first version of this rule read: "the body must start with OK". It was
@@ -738,8 +968,12 @@ async function pingAlert(outcome, suiteName, code) {
   try {
     const response = await fetch(url, {
       method: "POST",
-      /* Only a failing run has anything to say. A clean one just clears the state. */
-      body: code === 0 ? "" : alertBody(outcome, suiteName),
+      /*
+       * A failing run carries its diagnosis. A clean one clears the state —
+       * and, since 2026-09-11, names any blip the re-check absorbed, so the
+       * healthchecks events list keeps a record of transients with no mail.
+       */
+      body: code === 0 ? clearBody(outcome, suiteName) : alertBody(outcome, suiteName),
       signal: AbortSignal.timeout(10_000),
     });
     const text = (await response.text()).trim();

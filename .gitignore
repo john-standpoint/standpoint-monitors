@@ -4,3 +4,6 @@ node_modules/
 
 # Claude writes the commit message here; scripts/ship.sh reads it.
 .ship-msg
+# ship.sh renames it to this after committing. Without this line the NEXT ship's
+# `git add -A` commits the previous message file (found 2026-09-11 [claim-e7a2]).
+.ship-msg.sent

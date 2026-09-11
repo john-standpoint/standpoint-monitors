@@ -60,6 +60,25 @@ export const WARN = "warn";
 const ok = (id, severity, note) => ({ id, severity, ok: true, note });
 const bad = (id, severity, note, observed) => ({ id, severity, ok: false, note, observed });
 
+/*
+ * ⚠⚠ A TRANSPORT FAILURE NAMES ITS CAUSE — NEVER JUST "HTTP 0". Added
+ * 2026-09-11 [claim-e7a2].
+ *
+ * Until then every one of the sites below rendered `observed: HTTP 0` for a
+ * connection that never happened, and that string reached the annotation, the
+ * healthchecks mail and the log alike. Seven red fast runs in September
+ * (4–11 Sep) all read `HTTP 0` on the three Infomaniak targets, and not one of
+ * them could say whether the host refused, reset, timed out or failed DNS —
+ * four problems with four different owners. probe.mjs now builds a real cause
+ * (see describeTransportError); this is the one place that carries it into a
+ * failure, shared so that the seven call sites cannot drift apart.
+ *
+ * A real HTTP status is left exactly as it was: "HTTP 503" is already the
+ * diagnosis, and wrapping it would only add noise.
+ */
+export const observedStatus = ({ status, transportError }) =>
+  status === 0 && transportError ? `transport failure — ${transportError}` : `HTTP ${status}`;
+
 /* ------------------------------------------------------------------------ *
  * 1. The homepage is the LIVE build, not a staging build served by accident.
  * ------------------------------------------------------------------------ */
@@ -76,12 +95,12 @@ const bad = (id, severity, note, observed) => ({ id, severity, ok: false, note, 
  * sail through a presence-only check. This is copied deliberately from
  * assert-live-build.mjs, which learned it the same way.
  */
-export function checkHomepage({ status, body }) {
+export function checkHomepage({ status, body, transportError }) {
   const out = [];
   const id = "home";
 
   if (status !== 200) {
-    return [bad(id, PAGE, `Homepage did not answer 200.`, `HTTP ${status}`)];
+    return [bad(id, PAGE, `Homepage did not answer 200.`, observedStatus({ status, transportError }))];
   }
 
   /*
@@ -147,12 +166,12 @@ export const AI_AGENTS = [
   "Applebot-Extended",
 ];
 
-export function checkRobots({ status, body }) {
+export function checkRobots({ status, body, transportError }) {
   const out = [];
   const id = "robots";
 
   if (status !== 200) {
-    return [bad(id, PAGE, "robots.txt did not answer 200.", `HTTP ${status}`)];
+    return [bad(id, PAGE, "robots.txt did not answer 200.", observedStatus({ status, transportError }))];
   }
   if (!/^Allow: \/$/m.test(body)) {
     out.push(bad(id, PAGE, "robots.txt has no 'Allow: /'. This is a staging build.", firstLines(body, 6)));
@@ -196,13 +215,13 @@ export function checkRobots({ status, body }) {
  * response was indistinguishable from a merely stale one. Paging on `stale`
  * would swing the error the other way and train the alert to be ignored.
  */
-export function checkAvailability({ status, body }) {
+export function checkAvailability({ status, body, transportError }) {
   const out = [];
   const id = "availability";
   let payload;
 
   if (status !== 200) {
-    return [bad(id, PAGE, "/api/availability.php did not answer 200.", `HTTP ${status}`)];
+    return [bad(id, PAGE, "/api/availability.php did not answer 200.", observedStatus({ status, transportError }))];
   }
   try {
     payload = JSON.parse(body);
@@ -259,7 +278,7 @@ export function checkAvailability({ status, body }) {
  * DOING THE ONE THING IT WAS BUILT FOR. There is no shorter version of this
  * check that is worth running.
  */
-export function checkScanHealth({ status, body }) {
+export function checkScanHealth({ status, body, transportError }) {
   const out = [];
   const id = "scan-health";
   let payload;
@@ -278,7 +297,9 @@ export function checkScanHealth({ status, body }) {
      */
     const observed = body
       ? body.slice(0, 200)
-      : `HTTP ${status}, EMPTY BODY — no bytes at all, which usually means unreachable rather than malformed`;
+      : status === 0 && transportError
+        ? observedStatus({ status, transportError })
+        : `HTTP ${status}, EMPTY BODY — no bytes at all, which usually means unreachable rather than malformed`;
     return [bad(id, PAGE, "/api/health did not return parseable JSON.", observed)];
   }
 
@@ -329,12 +350,12 @@ export function checkScanHealth({ status, body }) {
  */
 const DRIFT_SLACK = 10;
 
-export function checkSitemap({ status, body }, { floor }) {
+export function checkSitemap({ status, body, transportError }, { floor }) {
   const out = [];
   const id = "sitemap";
 
   if (status !== 200) {
-    return [bad(id, PAGE, "sitemap.xml did not answer 200.", `HTTP ${status}`)];
+    return [bad(id, PAGE, "sitemap.xml did not answer 200.", observedStatus({ status, transportError }))];
   }
   if (!/<urlset\b/.test(body)) {
     return [bad(id, PAGE, "sitemap.xml is not a <urlset>.", body.slice(0, 200))];
@@ -416,12 +437,12 @@ export function checkSitemap({ status, body }, { floor }) {
  * ⚠ Failing only one direction is the trap. A check that only asserted "not in
  * sitemap" would pass with flying colours on a page that had been deleted.
  */
-export function checkHiddenPage({ status }, { sitemapUrls, url }) {
+export function checkHiddenPage({ status, transportError }, { sitemapUrls, url }) {
   const out = [];
   const id = "hidden-page";
 
   if (status !== 200) {
-    out.push(bad(id, PAGE, `Unlisted page ${url} is not reachable. Anyone John sent the link to gets a 404.`, `HTTP ${status}`));
+    out.push(bad(id, PAGE, `Unlisted page ${url} is not reachable. Anyone John sent the link to gets a 404.`, observedStatus({ status, transportError })));
   }
   if (sitemapUrls.some((u) => u.replace(/\/$/, "") === url.replace(/\/$/, ""))) {
     out.push(bad(id, WARN, `Unlisted page ${url} has appeared in the sitemap — it is no longer unlisted.`, url));
@@ -480,12 +501,12 @@ const CYRJ_STAGING_HOST = "new.chartingyourretirementjourney.com";
  *     still on disk as the rollback. If the document root is ever pointed back,
  *     the site returns 200 on every page and looks plausible.
  */
-export function checkCyrjHome({ status, body }) {
+export function checkCyrjHome({ status, body, transportError }) {
   const out = [];
   const id = "cyrj-home";
 
   if (status !== 200) {
-    return [bad(id, PAGE, `chartingyourretirementjourney.com did not answer 200.`, `HTTP ${status}`)];
+    return [bad(id, PAGE, `chartingyourretirementjourney.com did not answer 200.`, observedStatus({ status, transportError }))];
   }
 
   /*
@@ -563,11 +584,11 @@ export function checkCyrjHome({ status, body }) {
  * A worksheet that 404s is the one failure on this site with no recovery path
  * and no other witness — nobody browses to `/downloads/` to check.
  */
-export function checkCyrjWorksheet({ status, body }) {
+export function checkCyrjWorksheet({ status, body, transportError }) {
   const id = "cyrj-worksheet";
 
   if (status !== 200) {
-    return [bad(id, PAGE, `A worksheet PDF did not answer 200. The printed QR codes lead here.`, `HTTP ${status}`)];
+    return [bad(id, PAGE, `A worksheet PDF did not answer 200. The printed QR codes lead here.`, observedStatus({ status, transportError }))];
   }
   if (!body.startsWith("%PDF")) {
     return [
@@ -645,9 +666,9 @@ export function checkCyrjWorksheet({ status, body }) {
 const EN_NOT_FOUND_MARKER = "came here for";
 const FR_NOT_FOUND_MARKER = "vous cherchiez";
 
-function notFoundBase(id, severity, { status, body }, url) {
+function notFoundBase(id, severity, { status, transportError }, url) {
   if (status === 0) {
-    return [bad(id, severity, `${url} could not be reached at all.`, "transport failure — status 0, empty body")];
+    return [bad(id, severity, `${url} could not be reached at all.`, transportError ? observedStatus({ status, transportError }) : "transport failure — status 0, empty body, no cause recorded")];
   }
   /*
    * ⚠ NOT `!== 404`. A 200 here is a SOFT 404 — the page rendering as an
