@@ -21,7 +21,7 @@ import net from "node:net";
 import test from "node:test";
 
 import { checkAvailability, checkCyrjHome, checkCyrjWorksheet, checkHiddenPage, checkHomepage, checkNotFoundEn, checkRobots, checkScanHealth, checkSitemap, observedStatus } from "./checks.mjs";
-import { clearBody, describeTransportError, fetchWithRetry, run } from "./probe.mjs";
+import { CONNECT_ATTEMPT_TIMEOUT_MS, clearBody, describeTransportError, fetchWithRetry, run } from "./probe.mjs";
 
 /* ------------------------------------------------------------------------ *
  * Real failures from this Node's fetch
@@ -297,4 +297,30 @@ test("the CLEAR ping body is empty on an ordinary run and names each blip otherw
   assert.match(body, /clean, after 1 re-check/);
   assert.match(body, /RECOVERED {2}home: answered HTTP 200/);
   assert.match(body, /first pass: REFUSED \[ECONNREFUSED\]/);
+});
+
+/* ------------------------------------------------------------------------ *
+ * The 250 ms happy-eyeballs limit — added 2026-09-24 [claim-b7e3]
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Importing probe.mjs must raise Node's per-family connect attempt above its
+ * 250 ms default. Asserted on the process-wide value net.connect actually
+ * reads, not on the constant — a constant nobody applies would pass a test
+ * that only checked the constant.
+ */
+test("importing the probe raises Node's 250 ms per-family connect attempt", () => {
+  assert.equal(net.getDefaultAutoSelectFamilyAttemptTimeout(), CONNECT_ATTEMPT_TIMEOUT_MS);
+  assert.ok(CONNECT_ATTEMPT_TIMEOUT_MS >= 2_000, "a quarter-second limit is what paged on 2026-09-23");
+});
+
+/*
+ * Two families, each given the full attempt, must still fit inside the hard
+ * fetch timeout — otherwise a dead IPv4 path would time the whole fetch out
+ * before IPv6 was ever tried.
+ */
+test("two connect attempts fit inside the fetch timeout", async () => {
+  const source = await import("node:fs").then((fs) => fs.readFileSync(new URL("./probe.mjs", import.meta.url), "utf8"));
+  const fetchTimeout = Number(source.match(/const FETCH_TIMEOUT_MS = ([\d_]+);/)[1].replaceAll("_", ""));
+  assert.ok(2 * CONNECT_ATTEMPT_TIMEOUT_MS < fetchTimeout, `${2 * CONNECT_ATTEMPT_TIMEOUT_MS} ms must stay under ${fetchTimeout} ms`);
 });

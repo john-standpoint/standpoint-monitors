@@ -27,6 +27,7 @@
  * switch is not optional garnish.
  */
 
+import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -211,6 +212,36 @@ const SITEMAP_FLOOR = 94;
  * to mean "unreachable", not "slow".
  */
 const FETCH_TIMEOUT_MS = 20_000;
+
+/*
+ * ⚠⚠ THE 250 ms CONNECT LIMIT — Node's, not ours. Added 2026-09-24 [claim-b7e3].
+ *
+ * Node 22's fetch connects with "happy eyeballs" (autoSelectFamily): it tries
+ * the first address, and if the TCP handshake has not completed within
+ * autoSelectFamilyAttemptTimeout — DEFAULT 250 ms — it ABANDONS that attempt
+ * and moves to the next address family. Both Infomaniak domains are dual
+ * stack; GitHub's runners have no IPv6 route. So on any run where the IPv4
+ * handshake from a US runner to Geneva takes more than a quarter of a second,
+ * the IPv4 attempt is killed as ETIMEDOUT, the IPv6 one fails as ENETUNREACH,
+ * and the probe reports a healthy site as down — in about 253 ms, 17 s before
+ * FETCH_TIMEOUT_MS could ever fire.
+ *
+ * Observed: 2026-09-23 15:47 UTC, alert ping #977 — all three Infomaniak
+ * targets "TIMEOUT [ETIMEDOUT, ENETUNREACH] ... failed after 253 ms", on the
+ * first pass AND on the 60 s re-check, while HetrixTools (four locations, every
+ * minute) saw no downtime at all at that time. The re-check cannot rescue this:
+ * a slow route stays slow for a minute.
+ *
+ * The fix raises the per-family attempt to 5 s. Happy eyeballs still works —
+ * a dead IPv4 path still falls through to IPv6 — it just stops treating a
+ * quarter-second handshake as a dead path. Bundled fetch passes no timeout of
+ * its own, so net.connect falls back to this process-wide default (checked in
+ * the Node 22 source, net.js: `autoSelectFamilyAttemptTimeout ??= default`).
+ * ⚠ Keep it well under FETCH_TIMEOUT_MS: two families × 5 s = 10 s < 20 s.
+ */
+const CONNECT_ATTEMPT_TIMEOUT_MS = 5_000;
+net.setDefaultAutoSelectFamilyAttemptTimeout(CONNECT_ATTEMPT_TIMEOUT_MS);
+export { CONNECT_ATTEMPT_TIMEOUT_MS };
 
 /*
  * Retries exist so a single dropped packet does not page. They are bounded and
